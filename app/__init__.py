@@ -1,0 +1,1 @@
+"""Telegram collection service."""
