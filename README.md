@@ -228,6 +228,41 @@ docker compose run --rm collector alembic current
 docker compose run --rm collector alembic upgrade head
 ```
 
+## OpenSpec
+
+Проект использует OpenSpec для управления требованиями к следующим изменениям. Это инструмент
+разработки, а не runtime-зависимость collector. Постоянные спецификации фактически реализованного
+поведения находятся в `openspec/specs/`, активные предложения — в `openspec/changes/`, а
+завершённые предложения после архивирования сохраняются в `openspec/changes/archive/`.
+
+Для работы нужен Node.js 20.19 или новее:
+
+```bash
+npm install -g @fission-ai/openspec@latest
+openspec --version
+openspec validate --all --strict
+```
+
+Интеграция с Codex хранится в `.agents/skills/`. Типичный цикл изменения начинается в чате
+Codex:
+
+```text
+$openspec-explore Описать идею или проблему
+$openspec-propose Предложить конкретное изменение
+$openspec-apply-change <имя-изменения>
+$openspec-archive-change <имя-изменения>
+```
+
+Между `propose` и `apply` необходимо проверить `proposal.md`, delta-specs, `design.md` и
+`tasks.md`. Архивировать изменение следует только после реализации, тестов и проверки
+соответствия спецификации. `openspec/config.yaml` задаёт постоянные ограничения проекта:
+разделение артефактов и фактов, сохранение provenance и истории, минимальный scope, обязательные
+миграции, тесты и документацию.
+
+Базовые спецификации описывают авторизацию, raw event store, нормализацию, версионирование,
+загрузку media и эксплуатационную надёжность. `CONCEPT.md` остаётся более широким описанием
+назначения и будущего развития и не подменяет спецификации текущего поведения.
+
 ## Ограничения milestone 0.1
 
 - Сохраняются updates, которые TDLib доставил данному аккаунту после запуска. Полный исторический

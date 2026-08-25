@@ -1,0 +1,38 @@
+schema: spec-driven
+
+context: |
+  Write all project artifacts in Russian.
+  The project is a long-running Telegram collector responsible only for COLLECT, PRESERVE, NORMALIZE.
+  A source publication is an information artifact, not an established real-world fact.
+  Facts and interpretations must remain separate, provenance must never be lost, and observed history must never be overwritten.
+  Preserve raw input before deriving normalized state. Do not invent values absent from the source.
+  Do not add analytical processing, LLM, Kafka, Neo4j, Redis, Celery, probabilistic inference, or unrelated microservices.
+  Keep the design small and understandable. Every database schema change requires a migration.
+  Secrets must come from the runtime environment and must never be committed.
+
+rules:
+  proposal:
+    - Explicitly identify scope and non-goals
+    - Explain how provenance, history, and idempotency are affected
+  specs:
+    - Describe externally observable behavior rather than implementation details
+    - Include restart, duplicate-delivery, and failure scenarios when they are relevant
+    - Never describe a source claim as an established fact
+  design:
+    - Prefer the smallest design that satisfies the requirements
+    - Record storage compatibility and migration consequences
+  tasks:
+    - Include automated tests and documentation updates
+    - Include a migration whenever persistent schema changes
+    - Include verification commands before completion
+
+operations:
+  apply:
+    guidance:
+      - Preserve backward compatibility with already collected data
+      - Run formatting, linting, tests, and migration checks before marking work complete
+      - Do not report integration with Telegram as tested without real credentials
+  archive:
+    guidance:
+      - Confirm implementation and tests match the final specification before archiving
+      - Summarize the behavior that became part of the source-of-truth specs
