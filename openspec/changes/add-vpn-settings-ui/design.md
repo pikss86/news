@@ -1,109 +1,134 @@
 ## Context
 
-Collector сейчас загружает единый набор параметров из среды до создания подключения к PostgreSQL и TDLib. Поэтому web-настройка не может зависеть от основной базы данных: именно её адрес и credentials должны быть доступны для изменения до запуска collector. Текущий процесс также не имеет безопасного механизма перезапуска с новым снимком настроек.
+Collector сейчас требует готовый `.env`, доступную PostgreSQL и интерактивный terminal для Telegram authorization до начала работы. Целевой first-run должен поднять безопасную web-панель и внутреннюю БД без пользовательских credentials, затем провести оператора через настройку, диагностику и browser-based authorization до отдельной команды запуска ingestion.
 
-Административная страница должна работать на Linux-host, где Amnezia создаёт VPN-интерфейс. Точный адрес интерфейса и CIDR зависят от конкретной установки. См. `proposal.md` и delta-specs для полного поведенческого контракта.
+Панель работает на Linux-host, где Amnezia создаёт VPN-интерфейс. Имена интерфейсов различаются между протоколами и установками, поэтому autodetection должен быть консервативным и fail-closed. См. `proposal.md` и delta-specs для поведенческого контракта.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Сделать все параметры модели collector доступными на одной мобильной странице.
-- Позволить открыть панель до появления валидных Telegram и PostgreSQL credentials.
-- Применять ревизию как согласованный снимок и показывать разницу между сохранением и фактическим применением.
-- Сохранить возможность аварийного запуска только из environment.
-- Обеспечить сетевое ограничение, не зависящее только от web-аутентификации.
+- Обеспечить `docker compose up -d` на чистой установке без заполненного `.env`.
+- Открыть панель и bundled PostgreSQL раньше конфигурации Telegram collector.
+- Разделить draft, результаты проверок, active revision и applied revision.
+- Выполнить Telegram authorization целиком через мобильный браузер в Amnezia VPN.
+- Дать оператору понятные start/stop/restart и component-level diagnostics.
+- Сохранить аварийный environment-only запуск и существующие ingestion-данные.
 
 **Non-Goals:**
 
-- Панель не управляет Docker daemon, firewall, Amnezia, самим сервером PostgreSQL или пересборкой TDLib.
-- `POSTGRES_*` параметры bundled-контейнера и `TDLIB_GIT_REF` являются инфраструктурным bootstrap/build input, а не параметрами работающего collector. Панель управляет `DATABASE_URL` и всеми полями прикладной модели настроек; инфраструктурные значения показывает как требующие внешнего изменения, когда это уместно.
-- Панель не просматривает собранные сообщения и не становится общим административным API.
-- Публичный reverse proxy, сертификаты и внешний identity provider не входят в первую версию.
+- Панель не управляет Docker daemon, firewall, Amnezia server, произвольным PostgreSQL server или пересборкой TDLib.
+- `TDLIB_GIT_REF` остаётся build input. Для bundled PostgreSQL внутренние credentials генерируются системой и не показываются; для внешней БД оператор настраивает collector connection.
+- Проверка подключения не доказывает истинность, полноту или качество Telegram-содержимого.
+- Публичный reverse proxy, внешний identity provider и просмотр собранных сообщений не входят в первую версию.
 
 ## Decisions
 
-### 1. Отдельный административный процесс и управляемый supervisor collector
+### 1. Стандартный стек состоит из bootstrap, PostgreSQL, admin и collector supervisor
 
-Docker Compose получит опциональный сервис `admin`, использующий тот же образ и отдельную команду запуска. Он не зависит от PostgreSQL и разделяет с collector только named volume конфигурации. Collector запускается через небольшой supervisor: тот выбирает действующую ревизию, запускает рабочий цикл, следит за новой ревизией и выполняет контролируемую перезагрузку.
+Одноразовый bootstrap-компонент до запуска зависимых сервисов создаёт внутренний PostgreSQL password и settings encryption key в отдельном named volume. Он использует криптографический генератор, атомарную запись и права только для владельца; при наличии корректных файлов ничего не меняет. Повреждение существующего secret приводит к fail-closed ошибке, а не к тихой ротации поверх данных.
 
-Статус collector записывается в отдельный атомарно заменяемый документ в общем volume. Admin читает только этот документ и не получает управление процессом, PID namespace или Docker socket. Collector обнаруживает новую ревизию по manifest-файлу; это делает поток управления односторонним и ограниченным данными.
+PostgreSQL читает password через file-based secret. Admin не зависит от PostgreSQL и может открыть first-run setup. Collector container запускает supervisor даже при отсутствии прикладной конфигурации, но сам ingestion worker остаётся stopped/unconfigured.
 
-Альтернатива — встроить HTTP listener прямо в collector. Она отклонена, потому что не позволяет открыть настройку до валидной database/Telegram-конфигурации и связывает ошибку collector с доступностью панели. Альтернатива с Docker socket отклонена как чрезмерно привилегированная.
+Альтернатива с обязательным `.env` отклонена, потому что не решает мобильный first-run. Фиксированный default password отклонён как небезопасный.
 
-### 2. Файловое зашифрованное хранилище ревизий
+### 2. Отдельный admin и data-only control channel
 
-Настройки хранятся вне PostgreSQL в named volume `settings_data`. Manifest содержит только номер действующей ревизии и безопасные метаданные; payload каждой ревизии целиком шифруется authenticated encryption. Запись выполняется через временный файл, `fsync` и атомарный rename, а права файлов ограничиваются владельцем процесса.
+Admin и collector supervisor разделяют только `settings_data`, `bootstrap_secrets` и существующий TDLib state там, где это необходимо для authorization test. Admin записывает versioned settings, authorization responses и ограниченное desired state (`stopped`, `running`, `restart-requested`). Supervisor публикует status атомарным файлом и исполняет только заранее определённые переходы.
 
-Корневой ключ поступает через bootstrap secret file (`SETTINGS_MASTER_KEY_FILE`); значение ключа не принимается web-формой и не хранится рядом с ciphertext в открытом manifest. Потеря ключа считается recoverable operational error: admin остаётся способен показать инструкцию восстановления, но collector не получает пустые подстановочные secrets.
+Docker socket, PID namespace и произвольные команды не подключаются. Control request имеет монотонный номер, тип, target revision и authenticated MAC, чтобы повтор старого файла не запускал действие повторно.
 
-История ревизий append-only. Метаданные изменения содержат время, номера ревизий и имена изменённых полей, но никогда значения secret-полей. Rollback расшифровывает выбранную ревизию и сохраняет её копию новым номером.
+Альтернатива с HTTP control API collector отклонена из-за дополнительного listener и аутентификации между контейнерами. Прямая перезагрузка контейнера из admin отклонена как чрезмерно привилегированная.
 
-Альтернатива с таблицей в основной БД отклонена из-за bootstrap-цикла. Открытый JSON или управляемый панелью `.env` отклонены из-за утечки секретов и ненадёжной атомарной перезаписи bind-mounted файла.
+### 3. Зашифрованные draft/active ревизии вне основной БД
 
-### 3. Единая схема параметров и строгий приоритет источников
+Settings store размещается в named volume, потому что database URL сам является настройкой. Payload каждой ревизии шифруется authenticated encryption; manifest содержит только номера draft/active ревизий, changed-field metadata и безопасные timestamps. Запись использует temporary file, `fsync`, atomic rename и file lock.
 
-Модель настроек становится общей для environment loader, admin-формы и supervisor. Поля получают metadata: раздел, описание, secret/non-secret, default, диапазон и класс применения.
+Bootstrap по умолчанию создаёт encryption key в отдельном secrets volume. Для deployment с внешним secret manager допускается read-only key file override. Автоматический вариант защищает от попадания plaintext в backup manifest и accidental disclosure, но не считается защитой от root-доступа ко всем Docker volumes; это явно отражается в threat model.
 
-Приоритет источников:
+Сохранение формы создаёт draft и не влияет на active/applied revision. Rollback копирует старый decrypted snapshot в новый draft. Только успешные обязательные checks позволяют атомарно назначить draft активным при явной команде запуска.
 
-1. действующая валидная ревизия settings volume;
-2. environment как fallback, если постоянной ревизии ещё нет или admin отключён;
-3. безопасные defaults только для необязательных полей.
+### 4. Единая схема параметров и проверяемые snapshots
 
-Наличие постоянной ревизии запрещает смешивание отдельных environment-значений с ней: collector получает один согласованный снимок. Секретное пустое поле web-формы означает «оставить прежнее значение», а отдельное подтверждённое действие — удалить значение, если поле необязательно.
+Одна модель описывает environment fallback, HTML form, validation, masking и collector runtime. Поля имеют section, description, secret flag, default, constraints и apply class.
 
-Классы применения первой версии:
+Приоритет:
 
-- `dynamic`: уровень журналирования, media flag и download priority;
-- `collector-restart`: Telegram credentials, database URL, TDLib database key/path и retry configuration;
-- `stack-restart`: параметры, относящиеся к образу, bundled PostgreSQL или bootstrap административной сети; панель не объявляет их применёнными автоматически.
+1. active persistent revision для обычного запуска;
+2. environment snapshot только в явно выбранном emergency/legacy режиме или до появления persistent revision;
+3. defaults только для optional values.
 
-### 4. Сетевая изоляция через host network и проверку peer address
+Источники не смешиваются внутри snapshot. Empty secret input означает «не менять», а удаление optional secret требует отдельного подтверждения.
 
-Admin запускается только через Compose profile и использует host networking на Linux. HTTP listener непосредственно bind-ится к `AMNEZIA_ADMIN_BIND_ADDRESS`; пустой, wildcard, multicast, loopback либо публичный адрес отклоняется. Разрешённые сети читаются из `AMNEZIA_ADMIN_ALLOWED_CIDRS`, должны быть непубличными и содержать bind-адрес.
+Каждый check run привязан к точному hash draft-ревизии. Любое изменение draft аннулирует прежние результаты. Обязательные checks:
 
-Middleware сравнивает socket peer address с разрешёнными CIDR до маршрутизации и аутентификации. Proxy headers отключены; `X-Forwarded-For` и аналогичные заголовки игнорируются. Это сохраняет реальный адрес клиента и не создаёт публичного fallback при исчезновении интерфейса.
+- PostgreSQL connect и безопасный `SELECT 1`;
+- Alembic current/head comparison без изменения данных;
+- загрузка TDLib и валидность runtime paths;
+- writable TDLib/config/media directories и доступное место;
+- Telegram authorization state ready.
 
-Bridge networking с host port mapping рассматривался, но отклонён: в разных Docker-конфигурациях приложение может видеть адрес bridge gateway вместо VPN-клиента, что ослабляет второй уровень проверки. Ограничение этого решения — admin profile предназначен для Linux deployment, где работает Amnezia.
+Optional checks не блокируют запуск, но отображаются отдельно. Запуск выполняет migrations до ingestion; preflight показывает необходимость upgrade, не применяя migration самостоятельно.
 
-### 5. Простая server-rendered web-панель
+### 5. Telegram authorization как отдельная управляемая session
 
-Панель использует небольшое ASGI-приложение, server-rendered HTML templates и локальный CSS без frontend build pipeline и внешних CDN. Это уменьшает supply-chain и позволяет работать с мобильного браузера при нестабильном соединении.
+Authorization controller перестаёт напрямую читать stdin и вместо этого публикует typed challenge. В legacy режиме terminal adapter продолжает отвечать через input/getpass. В admin режиме authorization broker хранит только тип ожидаемого challenge, correlation id и безопасные presentation data.
 
-Маршруты ограничены setup/login/logout, settings, revisions/rollback и status. Все state-changing формы используют synchronizer CSRF token. Административный пароль хешируется алгоритмом для password storage; sessions имеют случайный server-side identifier, абсолютный и idle timeout, HttpOnly и SameSite=Strict cookie. Сессии и login-rate-limit можно хранить в памяти: после рестарта все сессии завершаются, что безопасно.
+Ответы code/password/email передаются через authenticated + CSRF-protected route и помещаются в одноразовый in-memory/short-lived IPC slot. Значения не входят в revisions, status или logs. Ответ принимается только для совпадающего current challenge и удаляется после передачи TDLib. Registration names могут быть отображены в текущей форме, но также не становятся постоянной конфигурацией.
 
-VPN обеспечивает шифрование транспортного участка. Панель не выставляется в Интернет; если оператор позднее добавит TLS внутри VPN, cookie автоматически получает `Secure` через bootstrap-флаг. Ни один HTML/API response не сериализует действующий секрет.
+TDLib database/files остаются persistent. Успешный state ready завершает Telegram check для hash текущего draft. Confirmation link другого устройства отображается только аутентифицированному VPN-пользователю.
 
-### 6. Управление жизненным циклом без потери ingestion-данных
+### 6. Amnezia autodetection с безопасным override
 
-Supervisor держит только один экземпляр collector. При `collector-restart` он сначала вызывает штатную остановку, ждёт закрытия TDLib и database engine, затем запускает новый экземпляр с цельным снимком. Новая ревизия считается применённой только после успешной инициализации; status различает `saved_revision`, `applied_revision`, `starting`, `running`, `stopped` и `error`.
+Admin использует host networking на Linux, чтобы видеть реальные host interfaces и socket peer address. При отсутствии override он перечисляет активные point-to-point/WireGuard/TUN-интерфейсы, исключает loopback/default-public/docker interfaces и выбирает только один кандидат с private address. CIDR берётся из адреса интерфейса и route metadata.
 
-Миграции выполняются после разрешения database URL и до запуска рабочего цикла. Ошибка миграции или подключения не изменяет raw/normalized данные и отражается безопасной категорией в status. Для dynamic-полей supervisor передаёт новые значения работающим компонентам; если безопасное динамическое применение не удаётся, выполняется обычный collector restart.
+Если кандидатов ноль или больше одного, listener не запускается. Оператор может задать interface/address/CIDR override; значения проверяются на существование, private scope, отсутствие wildcard/multicast и принадлежность bind IP указанной сети.
 
-### 7. Совместимость и тестируемость
+Listener bind-ится непосредственно к выбранному VPN IP. Middleware повторно проверяет socket peer address до routing; proxy headers отключены. Исчезновение интерфейса не приводит к bind на другом адресе.
 
-Если admin profile не включён и settings volume пуст, прежний запуск из `.env` остаётся рабочим. Существующие таблицы и миграции ingestion не меняются; новое хранилище не требует PostgreSQL migration. Тесты используют временный каталог, тестовый ключ и ASGI test client, поэтому не требуют TDLib, Amnezia или реальных credentials.
+### 7. Server-rendered mobile UI и web security
+
+Небольшое ASGI-приложение использует server-rendered templates и локальный responsive CSS без CDN/frontend build. Маршруты ограничены setup, login/logout, settings draft, checks, Telegram challenge, revisions/rollback, start/stop/restart и status.
+
+Первый VPN-пользователь создаёт admin password, который хранится стойким hash. Sessions server-side, имеют idle/absolute expiry; cookie HttpOnly и SameSite=Strict, а при TLS override также Secure. Все state-changing requests используют one-time synchronizer CSRF token. Login rate limiting опирается на socket peer address.
+
+Dashboard показывает checklist компонентов и различает `not_configured`, `checking`, `action_required`, `ready`, `starting`, `running`, `stopping`, `stopped`, `error`. Сообщения проходят централизованную redaction database URL, phone, API hash, codes и passwords.
+
+### 8. Явный жизненный цикл collector
+
+Supervisor по умолчанию имеет desired state `stopped`, если persistent configuration ещё не активировалась. Нажатие «Сохранить» создаёт draft; «Проверить» запускает preflight; «Сохранить и запустить сбор» после успешных checks назначает active revision и создаёт idempotent start request.
+
+Для start supervisor применяет migrations, создаёт ровно один collector и помечает revision applied только после успешной инициализации. Stop вызывает graceful shutdown, закрывает TDLib/database и сохраняет volumes. Restart сериализуется как stop → start той же active revision. Новая команда с уже обработанным request id игнорируется.
+
+Динамически применимые log/media параметры могут обновляться без reconnect; изменение credentials, database URL, TDLib paths/key или retry settings требует managed restart. Ошибка новой ревизии сохраняет ingestion data, оставляет desired/applied distinction видимым и не объявляет check успешным.
+
+### 9. Тестируемость и совместимость
+
+Environment-only entrypoint сохраняется для recovery. Существующие ingestion tables и migrations не переписываются. Новое хранилище конфигурации файловое и не требует migration основной БД.
+
+Unit/integration tests используют временные volumes, fake interfaces, ASGI client, fake TDLib authorization client и disposable PostgreSQL schema. Реальная проверка Amnezia bind и Telegram ready выполняется отдельно на целевом Linux-host с настоящими credentials и не симулируется как успешно пройденная.
 
 ## Risks / Trade-offs
 
-- **[Компрометация VPN-клиента даёт сетевой доступ к панели]** → обязательный отдельный пароль, короткая сессия, CSRF и rate limiting сохраняют второй барьер.
-- **[Ошибочный CIDR может заблокировать оператора]** → fail-closed поведение и документированный recovery через bootstrap-файл/перезапуск; публичный fallback запрещён.
-- **[Потеря master key делает secrets нечитаемыми]** → ключ хранится как отдельный persistent secret, README требует резервную копию; старые данные ingestion не зависят от него.
-- **[Host networking расширяет сетевую видимость admin container]** → минимальный образ, непривилегированный пользователь, отсутствие Docker socket/capabilities и listener только на проверенном VPN-IP.
-- **[Динамическая смена параметров может пересечься с обработкой update]** → единый supervisor сериализует применение ревизий; подключенческие параметры меняются только через graceful restart.
-- **[Изменение credentials bundled PostgreSQL не меняет уже инициализированный сервер]** → UI управляет подключением collector и явно маркирует инфраструктурные изменения; изменение самого сервера остаётся документированной операцией администратора.
-- **[HTTP cookie не имеет Secure без TLS]** → трафик разрешён только внутри зашифрованного Amnezia tunnel, SameSite/HttpOnly обязательны; для TLS предусмотрен bootstrap-флаг и Secure cookie.
+- **[Root-доступ к обоим Docker volumes раскрывает key и ciphertext]** → threat model не обещает защиту от host root; поддерживается внешний read-only key override и резервное копирование отдельно от settings data.
+- **[Autodetection может быть неоднозначным]** → fail-closed результат и проверенный explicit override без публичного fallback.
+- **[Компрометация VPN-клиента даёт сетевой доступ]** → отдельный password, rate limit, short session, CSRF и отсутствие secret echo.
+- **[Telegram test отправляет реальный code request]** → UI явно предупреждает о side effect; test требует действия оператора и не запускает ingestion.
+- **[Check устаревает после правки]** → результаты привязаны к cryptographic hash draft и немедленно инвалидируются при новой ревизии.
+- **[Bundled database password невозможно безопасно показать]** → он считается внутренним generated secret; внешняя БД настраивается отдельным connection mode.
+- **[Host networking расширяет сетевую видимость admin]** → non-root container, drop capabilities, read-only root filesystem, отсутствие Docker socket и точный VPN bind.
+- **[Миграция может пройти preflight comparison, но упасть при start]** → status показывает отдельную migration error, ingestion не запускается, существующие данные сохраняются.
 
 ## Migration Plan
 
-1. Добавить зависимости и модули settings store/admin/supervisor без изменения существующего entrypoint по умолчанию.
-2. Добавить `settings_data` volume и opt-in admin profile с обязательными Amnezia bootstrap-параметрами.
-3. Запустить существующий collector из `.env`, подтвердив обратную совместимость и отсутствие изменений данных.
-4. Запустить admin внутри тестовой приватной подсети, создать пароль и импортировать текущую environment-конфигурацию как первую ревизию.
-5. Проверить маскирование, CIDR deny, CSRF, rollback и контролируемый restart; затем включить supervisor как стандартный collector entrypoint.
-6. Для rollback отключить admin profile и запустить прежний collector из сохранённого `.env`; settings volume оставить для расследования и повторного включения.
+1. Добавить bootstrap volumes/service и подтвердить сохранение существующего PostgreSQL volume без смены credentials; для уже установленного проекта импортировать текущий password в secret file вместо генерации нового.
+2. Добавить settings store, admin и supervisor за совместимыми entrypoints; environment-only режим оставить доступным.
+3. Запустить admin и supervisor на чистых volumes, убедиться, что collector остаётся stopped, а панель доступна через однозначно найденный Amnezia IP.
+4. Создать admin password, сохранить draft, выполнить checks и browser Telegram authorization.
+5. Активировать revision явной кнопкой, применить migrations и запустить ingestion; проверить status и последний update.
+6. Проверить stop/restart, rollback-as-draft и восстановление после container recreate.
+7. Для rollback software version остановить новые сервисы и запустить legacy collector с сохранённым `.env`; ingestion volumes и settings history не удалять.
 
 ## Open Questions
 
-- Фактические значения `AMNEZIA_ADMIN_BIND_ADDRESS` и `AMNEZIA_ADMIN_ALLOWED_CIDRS` будут определены при развёртывании на целевом сервере; они не меняют архитектуру или контракт панели.
+- Фактическое имя/IP Amnezia-интерфейса и клиентский CIDR проверяются только при deployment; при неоднозначном autodetection оператор задаёт documented override.

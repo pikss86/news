@@ -24,3 +24,55 @@
 - **THEN** collector не запускается
 - **AND** панель сообщает о неполной конфигурации
 - **AND** система не имитирует успешное подключение
+
+## ADDED Requirements
+
+### Requirement: Интерактивная авторизация через защищённую страницу
+
+Система SHALL отображать текущий Telegram authorization state и SHALL принимать требуемые Telegram challenge responses через административную страницу вместо обязательного ввода в terminal.
+
+#### Scenario: Требуется authentication code
+
+- **GIVEN** TDLib ожидает Telegram authentication code
+- **WHEN** авторизованный оператор вводит код на странице
+- **THEN** код передаётся ожидающей authorization session
+- **AND** код не сохраняется в settings revisions, HTML response или logs
+
+#### Scenario: Требуется 2FA password
+
+- **GIVEN** TDLib ожидает пароль дополнительной защиты
+- **WHEN** оператор отправляет пароль через защищённую форму
+- **THEN** пароль однократно передаётся TDLib
+- **AND** не сохраняется после обработки
+
+#### Scenario: Требуется email, email code или registration data
+
+- **GIVEN** TDLib ожидает один из поддерживаемых дополнительных authorization inputs
+- **WHEN** оператор отправляет соответствующее значение
+- **THEN** значение передаётся только текущему ожидающему state
+- **AND** страница показывает следующее состояние процесса
+
+#### Scenario: Требуется подтверждение другого устройства
+
+- **GIVEN** TDLib вернул confirmation link
+- **WHEN** оператор открывает страницу проверки Telegram
+- **THEN** страница показывает безопасную ссылку и ожидает подтверждения
+- **AND** collector не считается авторизованным до состояния ready
+
+### Requirement: Проверка Telegram перед запуском сбора
+
+Система SHALL считать Telegram-проверку успешной только после получения authorization state ready для текущих credentials и persistent TDLib state.
+
+#### Scenario: Авторизация успешна
+
+- **GIVEN** оператор завершил все требуемые challenges
+- **WHEN** TDLib сообщает состояние ready
+- **THEN** dashboard показывает Telegram connected
+- **AND** соответствующая обязательная проверка считается пройденной для текущего draft
+
+#### Scenario: TDLib вернул ошибку
+
+- **GIVEN** credentials или challenge response отклонены
+- **WHEN** TDLib сообщает ошибку
+- **THEN** страница показывает безопасное сообщение и текущее ожидаемое действие
+- **AND** не отмечает Telegram-проверку успешной

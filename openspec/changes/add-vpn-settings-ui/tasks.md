@@ -1,49 +1,63 @@
-## 1. Модель и безопасное хранилище настроек
+## 1. Clean bootstrap и модель настроек
 
-- [ ] 1.1 Расширить зависимости минимальным ASGI/template/crypto/password-hashing набором и подтвердить установку через сборку Docker image
-- [ ] 1.2 Выделить общую модель всех collector-настроек с metadata раздела, secret-флага и класса применения; проверить defaults, диапазоны и полную Pydantic-валидацию unit-тестами
-- [ ] 1.3 Добавить отдельную bootstrap-модель для settings volume, master-key file, Amnezia bind address/CIDR, session timeout и TLS-cookie flag; проверить отклонение пустых, wildcard, loopback и публичных сетей
-- [ ] 1.4 Реализовать authenticated encryption и атомарную запись файлов с правами владельца; проверить round-trip, неверный ключ, повреждённый ciphertext и отсутствие plaintext secrets на диске
-- [ ] 1.5 Реализовать append-only ревизии, manifest, changed-field metadata, согласованный snapshot и rollback-as-new-revision; проверить нумерацию, параллельное сохранение и сохранность прошлых ревизий
-- [ ] 1.6 Реализовать безопасный приоритет persistent revision → environment fallback → optional defaults и проверить, что источники не смешиваются внутри одного snapshot
+- [ ] 1.1 Добавить минимальные ASGI/template/crypto/password-hashing зависимости и проверить их установку полной Docker build
+- [ ] 1.2 Выделить общую immutable модель всех collector-настроек с metadata раздела, secret-флага и apply class; проверить defaults, ranges и cross-field validation unit-тестами
+- [ ] 1.3 Реализовать idempotent bootstrap внутренних PostgreSQL credentials и settings encryption key в persistent secret volume; проверить clean run, повторный run, file permissions и fail-closed damaged secret
+- [ ] 1.4 Перевести bundled PostgreSQL и collector на file-based internal database secret без обязательного заполненного `.env`; проверить запуск чистого Compose stack и сохранение password после recreate
+- [ ] 1.5 Сохранить environment-only recovery loader и проверить, что persistent snapshot и environment не смешиваются внутри одной конфигурации
 
-## 2. Безопасность административного доступа
+## 2. Зашифрованные drafts, revisions и control state
 
-- [ ] 2.1 Реализовать проверку Amnezia peer address по нескольким private CIDR до маршрутизации; проверить allow/deny и игнорирование X-Forwarded-For тестами middleware
-- [ ] 2.2 Реализовать первичное создание и замену административного пароля со стойким хешированием; проверить отсутствие пароля в файлах, ответах и logs
-- [ ] 2.3 Реализовать server-side sessions с absolute/idle expiry и HttpOnly SameSite=Strict cookie; проверить вход, выход, expiration и завершение сессий после рестарта
-- [ ] 2.4 Добавить synchronizer CSRF tokens на все изменяющие маршруты и проверить, что отсутствующий, чужой и повторно использованный token не изменяют состояние
-- [ ] 2.5 Добавить ограничение попыток входа по непосредственному адресу клиента и проверить временную блокировку без записи введённого пароля
+- [ ] 2.1 Реализовать authenticated encryption, atomic write/fsync/rename и file locking; проверить round-trip, wrong key, corrupted ciphertext и отсутствие plaintext secrets на диске
+- [ ] 2.2 Реализовать append-only revisions, отдельные draft/active/applied pointers и changed-field metadata; проверить монотонную нумерацию и сохранность предыдущих revisions
+- [ ] 2.3 Реализовать rollback-as-new-draft и invalidation check results после изменения draft hash; проверить, что rollback не запускает collector автоматически
+- [ ] 2.4 Реализовать signed monotonic start/stop/restart requests и atomic supervisor status без произвольных команд; проверить повтор request id и damaged control file
+- [ ] 2.5 Реализовать централизованную redaction phone, API hash, database URL/password, authentication code и 2FA; проверить logs, status, HTML и errors secret-scan тестами
 
-## 3. Административная web-страница
+## 3. Amnezia VPN и web security
 
-- [ ] 3.1 Создать отдельный admin entrypoint и server-rendered маршруты setup/login/logout/settings/status/revisions/rollback; проверить доступность setup до конфигурации PostgreSQL и Telegram
-- [ ] 3.2 Создать адаптивные HTML templates и локальный CSS без CDN, отобразив все разделы модели, defaults, descriptions и классы применения; проверить рендеринг на mobile viewport
-- [ ] 3.3 Реализовать masked secret inputs с семантикой «пусто — оставить прежнее» и отдельным подтверждённым удалением optional secret; проверить отсутствие сохранённых секретов в HTML и response bodies
-- [ ] 3.4 Реализовать атомарную обработку формы и field-level ошибки без частичного сохранения; проверить invalid ranges, blank required values и противоречивые database-поля
-- [ ] 3.5 Реализовать историю безопасных metadata и подтверждённый rollback, проверив, что rollback создаёт новую ревизию и не показывает значения secrets
-- [ ] 3.6 Реализовать status page с saved/applied revision, состоянием collector и безопасной категорией последней ошибки; проверить маскирование URL, Telegram и административных secrets
+- [ ] 3.1 Реализовать консервативный поиск активных private TUN/WireGuard/Amnezia interfaces с fake-interface fixtures; проверить один, ноль и несколько кандидатов
+- [ ] 3.2 Реализовать explicit interface/address/CIDR override validation и точный listener bind; проверить отказ wildcard, public, multicast, missing interface и CIDR mismatch
+- [ ] 3.3 Реализовать peer-address middleware до routing с игнорированием proxy headers; проверить VPN allow, non-VPN deny и spoofed X-Forwarded-For
+- [ ] 3.4 Реализовать создание/замену admin password со стойким hash и проверить отсутствие plaintext password в persistent files и responses
+- [ ] 3.5 Реализовать server-side sessions с idle/absolute expiry и HttpOnly SameSite=Strict cookie; проверить login/logout/expiry/restart invalidation и Secure flag при TLS mode
+- [ ] 3.6 Добавить one-time CSRF tokens и login rate limiting по socket peer address; проверить missing/wrong/reused token и временную блокировку неверных входов
 
-## 4. Supervisor и применение конфигурации
+## 4. First-run UI и диагностика
 
-- [ ] 4.1 Рефакторизовать создание collector так, чтобы он принимал готовый immutable Settings snapshot и сохранял прежний environment-only entrypoint; подтвердить существующими unit/integration-тестами
-- [ ] 4.2 Реализовать supervisor, который ждёт полную конфигурацию, запускает ровно один collector и атомарно публикует status; проверить состояния unconfigured/starting/running/error/stopped
-- [ ] 4.3 Реализовать обнаружение новой ревизии и dynamic-применение log level, media flag и download priority; проверить номер фактически применённой ревизии
-- [ ] 4.4 Реализовать graceful collector restart для Telegram/database/TDLib/retry изменений с закрытием TDLib и database engine до нового запуска; проверить порядок lifecycle с test doubles
-- [ ] 4.5 Перенести применение Alembic migrations после разрешения database URL и до старта ingestion; проверить новую БД, актуальную БД и безопасный status при ошибке миграции
-- [ ] 4.6 Проверить, что неуспешное применение новой ревизии не меняет raw events/messages/versions и не объявляется успешным
+- [ ] 4.1 Создать отдельный admin entrypoint и server-rendered setup/login/settings/status/revisions routes, доступные до Telegram/PostgreSQL configuration; проверить first-run ASGI flow
+- [ ] 4.2 Создать responsive templates и локальный CSS без CDN для всех sections, checks и controls; проверить mobile viewport без горизонтальной прокрутки
+- [ ] 4.3 Реализовать masked secret inputs с семантикой «пусто — оставить», подтверждённым удалением optional secret и field-level validation; проверить отсутствие partial draft save
+- [ ] 4.4 Реализовать PostgreSQL connect/SELECT 1 и Alembic current/head preflight без изменения ingestion data; проверить success, unreachable DB, auth error и migration-required states
+- [ ] 4.5 Реализовать TDLib load, runtime path, writable directories и disk-space preflight; проверить component-level results и блокировку запуска при обязательной ошибке
+- [ ] 4.6 Реализовать dashboard со статусами draft/active/applied, PostgreSQL, migrations, TDLib, Telegram, storage, collector и last update; проверить безопасное отображение каждой error category
 
-## 5. Docker и Amnezia deployment
+## 5. Telegram authorization через браузер
 
-- [ ] 5.1 Добавить непривилегированный admin service в opt-in Compose profile с host networking, settings_data volume и без Docker socket/capabilities; проверить итоговый `docker compose config`
-- [ ] 5.2 Настроить admin listener на точный `AMNEZIA_ADMIN_BIND_ADDRESS` с fail-closed запуском и отключёнными proxy headers; проверить отказ при отсутствующем интерфейсе без wildcard fallback
-- [ ] 5.3 Подключить settings_data к collector supervisor и сохранить совместимый запуск без admin profile; проверить restart/recreate обоих контейнеров без потери ревизий
-- [ ] 5.4 Обновить `.env.example` только bootstrap/fallback placeholders и убедиться через `git check-ignore`/secret scan, что реальные `.env`, master key и settings volume не отслеживаются Git
+- [ ] 5.1 Отделить TDLib authorization state machine от terminal input через typed challenge/response interface и сохранить terminal adapter; подтвердить существующий interactive flow unit-тестами
+- [ ] 5.2 Реализовать одноразовый authorization broker с correlation id, timeout и current-state validation; проверить stale/wrong/duplicate response rejection
+- [ ] 5.3 Добавить защищённые формы для authentication code, 2FA, email/email code, registration data и other-device confirmation; проверить каждый state с fake TDLib client
+- [ ] 5.4 Проверить, что codes/passwords не попадают в settings revisions, status, cookies, HTML responses и logs после обработки
+- [ ] 5.5 Связать Telegram ready result с точным draft hash и persistent TDLib state; проверить invalidation после смены credentials и повторное использование авторизованной session после restart
 
-## 6. Документация и итоговая проверка
+## 6. Supervisor и явное управление сбором
 
-- [ ] 6.1 Обновить README: threat model, получение Amnezia interface IP/CIDR, создание master-key file, запуск admin profile, первый пароль, настройка с телефона, применение/rollback и emergency environment-only recovery
-- [ ] 6.2 Обновить CONCEPT.md описанием административного control plane без привязки к конкретным технологиям и без смешивания с ingestion/analysis
-- [ ] 6.3 Добавить тесты security headers, secret redaction и полного first-run → save → supervisor apply → rollback потока без реальных credentials
-- [ ] 6.4 Запустить `openspec validate --all --strict`, formatting, lint, полный pytest, PostgreSQL integration test, Alembic check и Docker Compose build/config; исправить все найденные ошибки
-- [ ] 6.5 На Linux-host с известными параметрами Amnezia проверить bind только на VPN-IP и deny клиента вне CIDR; если целевая сеть недоступна, явно оставить эту проверку как требующую реального deployment
+- [ ] 6.1 Рефакторизовать создание collector для готового Settings snapshot и сохранить legacy environment entrypoint; подтвердить существующими unit и PostgreSQL integration tests
+- [ ] 6.2 Реализовать supervisor с desired states unconfigured/stopped/running и ровно одним ingestion worker; проверить lifecycle test doubles
+- [ ] 6.3 Реализовать кнопку «Сохранить черновик» без запуска и «Проверить подключения» с привязкой результатов к draft hash; проверить, что непроверенный draft не влияет на running collector
+- [ ] 6.4 Реализовать «Сохранить и запустить сбор» только после обязательных checks и Telegram ready; проверить atomic active promotion и переход starting → running/error
+- [ ] 6.5 Реализовать graceful stop/restart с закрытием TDLib и database engine до следующего start; проверить порядок ресурсов и idempotent повтор команды
+- [ ] 6.6 Реализовать dynamic apply для log/media fields и managed restart для connection/TDLib/retry fields; проверить applied revision и fallback на restart при dynamic failure
+- [ ] 6.7 Выполнять Alembic upgrade после active database resolution и до ingestion; проверить fresh/current/outdated/error database без потери raw events/messages/versions
+- [ ] 6.8 Обновлять last successful update timestamp из collector и проверить его отображение и сохранение safe status после container restart
+
+## 7. Docker, документация и итоговая проверка
+
+- [ ] 7.1 Обновить Compose стандартным bootstrap/admin/supervisor flow, named secret/settings volumes, host network admin, non-root user, dropped capabilities, read-only root filesystem и отсутствующим Docker socket; проверить `docker compose config`
+- [ ] 7.2 Добавить healthchecks и startup ordering так, чтобы clean `docker compose up -d` поднимал панель и БД, но не ingestion; проверить состояние контейнеров без `.env`
+- [ ] 7.3 Обновить `.env.example` только optional override/recovery placeholders и проверить, что `.env`, bootstrap secrets и settings data игнорируются Git и не входят в image
+- [ ] 7.4 Обновить README сценарием «одна команда → Amnezia URL → пароль → настройки → checks → Telegram code/2FA → start», recovery, backup и threat model
+- [ ] 7.5 Обновить CONCEPT.md описанием setup/control plane, диагностик и явного запуска без привязки к конкретным технологиям
+- [ ] 7.6 Добавить end-to-end test clean bootstrap → setup → draft → checks → web authorization → start → last update → stop → restart → rollback без реальных credentials
+- [ ] 7.7 Запустить `openspec validate --all --strict`, format, lint, полный pytest, PostgreSQL integration, Alembic check, Compose build/config и исправить найденные ошибки
+- [ ] 7.8 На Linux-host с реальной Amnezia проверить bind только на VPN IP и deny вне CIDR; с реальными Telegram credentials проверить code/2FA, ready, получение update и явно отделить эти результаты от автоматических тестов
