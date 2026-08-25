@@ -106,3 +106,31 @@ class TelegramMessageVersion(Base):
         UniqueConstraint("chat_id", "message_id", "snapshot_hash"),
         Index("ix_message_versions_observed", "chat_id", "message_id", "observed_at"),
     )
+
+
+class TelegramFile(Base):
+    __tablename__ = "telegram_files"
+
+    file_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    expected_size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    local_path: Mapped[str | None] = mapped_column(Text)
+    can_be_downloaded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_downloading_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_downloading_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    downloaded_size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    remote: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_file: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    first_collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    download_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_download_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    download_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ix_telegram_files_download_queue",
+            "is_downloading_completed",
+            "download_requested_at",
+        ),
+    )

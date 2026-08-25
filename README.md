@@ -25,6 +25,8 @@ Raw и normalized storage разделены намеренно:
 - `telegram_messages` — идентичность `(chat_id, message_id)` и последнее наблюдаемое состояние.
 - `telegram_message_versions` — неизменяемые снимки значимых состояний. Создаются версии
   `created`, `edited`, `metadata` и `deleted`; одинаковый снимок повторной версии не создаёт.
+- `telegram_files` — последнее состояние обнаруженных файлов, локальный путь, прогресс и
+  устойчивая отметка о запросе скачивания.
 
 `source_event_id` у каждой версии ведёт к исходному `td_events`. Версия удаления является
 tombstone: она устанавливает `is_deleted/deleted_at`, но сохраняет последний известный текст и
@@ -53,6 +55,18 @@ cp .env.example .env
 - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE_NUMBER`;
 - `TELEGRAM_DATABASE_ENCRYPTION_KEY` — стабильная случайная строка;
 - `POSTGRES_PASSWORD` и пароль внутри `DATABASE_URL` — они должны совпадать.
+
+Скачивание media по умолчанию выключено. Чтобы включить его, установите:
+
+```dotenv
+TELEGRAM_DOWNLOAD_MEDIA=true
+TELEGRAM_MEDIA_DOWNLOAD_PRIORITY=16
+```
+
+Приоритет может быть от 1 до 32: большее значение означает более раннюю обработку. Collector
+находит все файловые объекты внутри нового или отредактированного сообщения, включая доступные
+варианты изображений и thumbnails. Ограничений по размеру и типу файла в этой версии нет, поэтому
+при включении контролируйте свободное место в `tdlib_data`.
 
 Если пароль содержит URL-special символы, percent-encode его в `DATABASE_URL`.
 
@@ -95,12 +109,15 @@ docker compose stop
 `updateMessageInteractionInfo`, `updateDeleteMessages`, `updateNewChat`, `updateChatTitle` и
 `updateChatPhoto`. Сохраняются sender object, publication/edit/collection timestamps, type и полный
 content object, plain text/caption, forward/reply objects, media metadata, interaction info и
-deleted state. Полный исходный update остаётся в `td_events`; отсутствующие в TDLib данные не
-синтезируются.
+deleted state. Обнаруженные файловые дескрипторы записываются в `telegram_files`. При включённом
+флаге незавершённые файлы ставятся в устойчивую очередь, а их `updateFile` обновляет прогресс,
+статус завершения и `local_path`. Полный исходный update остаётся в `td_events`; отсутствующие в
+TDLib данные не синтезируются.
 
 Любые остальные ответы/updates сохраняются raw и могут быть нормализованы будущей миграцией или
-отдельным processing pipeline. Collector не скачивает media-файлы: он сохраняет доступные TDLib
-file/media descriptors.
+отдельным processing pipeline. Когда скачивание выключено, collector только инвентаризирует
+доступные file/media descriptors. Если позже включить флаг и перезапустить сервис, он поставит в
+очередь уже известные незавершённые файлы.
 
 ## SQL-примеры
 
@@ -159,6 +176,27 @@ ORDER BY received_at DESC
 LIMIT 100;
 ```
 
+Последние скачанные media-файлы:
+
+```sql
+SELECT file_id, size, downloaded_size, local_path, download_completed_at
+FROM telegram_files
+WHERE is_downloading_completed
+ORDER BY download_completed_at DESC
+LIMIT 100;
+```
+
+Файлы, для которых загрузка запрошена, но ещё не завершена:
+
+```sql
+SELECT file_id, expected_size, downloaded_size,
+       is_downloading_active, last_download_requested_at
+FROM telegram_files
+WHERE download_requested_at IS NOT NULL
+  AND NOT is_downloading_completed
+ORDER BY last_download_requested_at;
+```
+
 ## Разработка и тесты
 
 Проект требует Python 3.12+. Локально необходимо отдельно собрать TDLib по
@@ -196,7 +234,8 @@ docker compose run --rm collector alembic upgrade head
   backfill и автоматическое управление списком каналов пока не реализованы.
 - Удаление/редактирование известно только если TDLib доставил соответствующий update. Telegram не
   гарантирует восстановление события, пропущенного до первой установки collector.
-- Media-файлы не загружаются, secret chats отключены, comments отдельно не классифицируются.
+- Скачивание media опционально и не имеет фильтров размера или типа; secret chats отключены,
+  comments отдельно не классифицируются.
 - Raw dedup по полному JSON означает, что два байт-семантически одинаковых updates считаются одним
   наблюдаемым событием; время первой фиксации сохраняется.
 - Нет claim extraction, story clustering, fact checking, source scoring, alerts, LLM, Kafka,

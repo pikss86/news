@@ -29,7 +29,14 @@ async def async_main() -> None:
         settings.database_retry_max_seconds,
     )
     authorization = AuthorizationController(client, settings)
-    service = CollectorService(client, database, UpdateRepository(), authorization)
+    service = CollectorService(
+        client,
+        database,
+        UpdateRepository(),
+        authorization,
+        download_media=settings.telegram_download_media,
+        download_priority=settings.telegram_media_download_priority,
+    )
 
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()

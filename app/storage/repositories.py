@@ -2,11 +2,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collector.media import extract_file_objects
 from app.collector.normalizer import (
     MessageSnapshot,
     as_deleted,
@@ -17,7 +19,13 @@ from app.collector.normalizer import (
     with_edit_date,
     with_interaction_info,
 )
-from app.storage.models import TdEvent, TelegramChat, TelegramMessage, TelegramMessageVersion
+from app.storage.models import (
+    TdEvent,
+    TelegramChat,
+    TelegramFile,
+    TelegramMessage,
+    TelegramMessageVersion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +89,9 @@ class UpdateRepository:
         observed_at: datetime,
     ) -> None:
         event_type = update.get("@type")
+        if event_type == "updateFile":
+            await self._upsert_file(session, update["file"], observed_at, log_completion=True)
+            return
         if event_type == "updateNewChat":
             await self._upsert_chat(session, update["chat"], update, observed_at)
             return
@@ -102,6 +113,7 @@ class UpdateRepository:
                 observed_at,
                 "created",
             )
+            await self._upsert_files_from_content(session, message.get("content"), observed_at)
             logger.info(
                 "new message received",
                 extra={"chat_id": message["chat_id"], "message_id": message["id"]},
@@ -118,6 +130,7 @@ class UpdateRepository:
                 observed_at,
                 "edited",
             )
+            await self._upsert_files_from_content(session, update.get("new_content"), observed_at)
             logger.info(
                 "message edited",
                 extra={"chat_id": update["chat_id"], "message_id": update["message_id"]},
@@ -165,6 +178,109 @@ class UpdateRepository:
                     "message deleted",
                     extra={"chat_id": chat_id, "message_id": deleted_message_id},
                 )
+
+    async def queue_file_downloads(
+        self, session: AsyncSession, file_ids: list[int] | None = None
+    ) -> list[int]:
+        now = datetime.now(UTC)
+        statement = (
+            sql_update(TelegramFile)
+            .where(
+                TelegramFile.is_downloading_completed.is_(False),
+                TelegramFile.can_be_downloaded.is_(True),
+            )
+            .values(
+                download_requested_at=func.coalesce(TelegramFile.download_requested_at, now),
+                last_download_requested_at=now,
+            )
+            .returning(TelegramFile.file_id)
+        )
+        if file_ids is not None:
+            if not file_ids:
+                return []
+            statement = statement.where(TelegramFile.file_id.in_(set(file_ids)))
+        result = await session.scalars(statement)
+        return list(result.all())
+
+    async def inventory_existing_message_files(self, session: AsyncSession) -> int:
+        contents = await session.scalars(
+            select(TelegramMessage.content).where(TelegramMessage.content.is_not(None))
+        )
+        discovered = 0
+        observed_at = datetime.now(UTC)
+        for content in contents:
+            for file_object in extract_file_objects(content):
+                await self._upsert_file(
+                    session,
+                    file_object,
+                    observed_at,
+                    update_existing=False,
+                )
+                discovered += 1
+        if discovered:
+            logger.info("existing media inventory scanned", extra={"file_count": discovered})
+        return discovered
+
+    async def _upsert_files_from_content(
+        self, session: AsyncSession, content: Any, observed_at: datetime
+    ) -> None:
+        for file_object in extract_file_objects(content):
+            await self._upsert_file(session, file_object, observed_at)
+
+    async def _upsert_file(
+        self,
+        session: AsyncSession,
+        file_object: dict[str, Any],
+        observed_at: datetime,
+        *,
+        update_existing: bool = True,
+        log_completion: bool = False,
+    ) -> None:
+        local = file_object.get("local") or {}
+        completed_at = observed_at if local.get("is_downloading_completed", False) else None
+        statement = insert(TelegramFile).values(
+            file_id=file_object["id"],
+            size=file_object.get("size", 0),
+            expected_size=file_object.get("expected_size", 0),
+            local_path=local.get("path") or None,
+            can_be_downloaded=local.get("can_be_downloaded", False),
+            is_downloading_active=local.get("is_downloading_active", False),
+            is_downloading_completed=local.get("is_downloading_completed", False),
+            downloaded_size=local.get("downloaded_size", 0),
+            remote=file_object.get("remote"),
+            raw_file=file_object,
+            first_collected_at=observed_at,
+            last_updated_at=observed_at,
+            download_completed_at=completed_at,
+        )
+        if update_existing:
+            statement = statement.on_conflict_do_update(
+                index_elements=[TelegramFile.file_id],
+                set_={
+                    "size": statement.excluded.size,
+                    "expected_size": statement.excluded.expected_size,
+                    "local_path": statement.excluded.local_path,
+                    "can_be_downloaded": statement.excluded.can_be_downloaded,
+                    "is_downloading_active": statement.excluded.is_downloading_active,
+                    "is_downloading_completed": statement.excluded.is_downloading_completed,
+                    "downloaded_size": statement.excluded.downloaded_size,
+                    "remote": statement.excluded.remote,
+                    "raw_file": statement.excluded.raw_file,
+                    "last_updated_at": observed_at,
+                    "download_completed_at": func.coalesce(
+                        TelegramFile.download_completed_at,
+                        statement.excluded.download_completed_at,
+                    ),
+                },
+            )
+        else:
+            statement = statement.on_conflict_do_nothing(index_elements=[TelegramFile.file_id])
+        await session.execute(statement)
+        if completed_at is not None and log_completion:
+            logger.info(
+                "media download completed",
+                extra={"file_id": file_object["id"], "local_path": local.get("path")},
+            )
 
     async def _upsert_chat(
         self,

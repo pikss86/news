@@ -32,6 +32,8 @@ services:
       TDLIB_DATA_DIR: /var/lib/tdlib
       TDLIB_LIBRARY_PATH: /usr/local/lib/libtdjson.so
       TDLIB_LOG_VERBOSITY: ${TDLIB_LOG_VERBOSITY:-2}
+      TELEGRAM_DOWNLOAD_MEDIA: ${TELEGRAM_DOWNLOAD_MEDIA:-false}
+      TELEGRAM_MEDIA_DOWNLOAD_PRIORITY: ${TELEGRAM_MEDIA_DOWNLOAD_PRIORITY:-16}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     stdin_open: true
     tty: true

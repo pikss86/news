@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     tdlib_data_dir: Path = Path("./tdlib-data")
     tdlib_library_path: Path | None = None
     tdlib_log_verbosity: int = Field(default=2, ge=0, le=1024)
+    telegram_download_media: bool = False
+    telegram_media_download_priority: int = Field(default=16, ge=1, le=32)
     log_level: str = "INFO"
     database_retry_initial_seconds: float = Field(default=1.0, gt=0)
     database_retry_max_seconds: float = Field(default=30.0, gt=0)
