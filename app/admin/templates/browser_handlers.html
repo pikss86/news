@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Потоковые обработчики{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>Потоковые обработчики</h2><p>Какие обработчики активны, как они находят файлы и что уже распознано в кэше.</p></div><a class="button" href="/browser/cache">Вернуться в кэш</a></section>
+<section class="handler-grid">
+{% for handler in handlers %}<article class="card handler-card"><div class="section-title"><h2>📦 {{ handler.label }}</h2><span class="handler-badge">Активен · найдено {{ handler.matched_count }}</span></div><p>{{ handler.description }}</p><p><strong>Какие файлы:</strong> {{ handler.detection }}</p><details><summary>Текущие ограничения</summary><dl>{% for name, value in handler.configuration.items() %}<div><dt>{{ name }}</dt><dd>{{ value }}</dd></div>{% endfor %}</dl></details></article>
+{% else %}<p class="empty">Потоковые обработчики не зарегистрированы.</p>{% endfor %}
+</section>
+<section class="card table-card"><div class="section-title handled-title"><h2>Распознанные файлы во всём TDLib cache</h2><span class="muted">{{ rows|length }}</span></div><div class="table-wrap"><table><thead><tr><th>Файл</th><th>Обработчик</th><th>Размер</th><th>Изменён</th><th>Действие</th></tr></thead><tbody>
+{% for item in rows %}<tr class="handled-file"><td class="path-cell"><a href="{{ item.url }}"><strong>📦 {{ item.relative_path }}</strong></a></td><td><span class="handler-badge">{{ item.handler_label }}</span></td><td>{{ item.size }} B</td><td>{{ item.modified_at }}</td><td><a class="button primary small-button" href="{{ item.url }}">Открыть архив</a></td></tr>
+{% else %}<tr><td colspan="5" class="empty">Подходящих файлов в кэше пока нет.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

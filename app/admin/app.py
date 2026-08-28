@@ -197,6 +197,46 @@ def _scan_cache_directory(
     return current_path, entries
 
 
+def _scan_handled_cache_files(
+    data_directory: Path,
+    handlers: FileHandlerRegistry,
+    *,
+    max_files: int = 20_000,
+) -> list[dict[str, Any]]:
+    try:
+        cache_directory = (data_directory / "files").resolve(strict=True)
+    except (OSError, RuntimeError):
+        return []
+    matches: list[dict[str, Any]] = []
+    scanned = 0
+    for candidate in cache_directory.rglob("*"):
+        if scanned >= max_files:
+            break
+        try:
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_relative_to(cache_directory) or not resolved.is_file():
+                continue
+            stat_result = resolved.stat()
+        except (OSError, RuntimeError):
+            continue
+        scanned += 1
+        handler = handlers.matching(resolved)
+        if handler is None:
+            continue
+        matches.append(
+            {
+                "name": resolved.name,
+                "relative_path": resolved.relative_to(cache_directory).as_posix(),
+                "size": stat_result.st_size,
+                "modified_at": datetime.fromtimestamp(stat_result.st_mtime, UTC),
+                "handler_id": handler.handler_id,
+                "handler_label": handler.label,
+            }
+        )
+    matches.sort(key=lambda item: (item["handler_label"], item["relative_path"].casefold()))
+    return matches
+
+
 def _settings_from_form(form: Any, current: Settings | None, secrets_directory: Path) -> Settings:
     values = current.plain_dict() if current else _default_values(secrets_directory)
     for name in Settings.model_fields:
@@ -708,6 +748,7 @@ def create_admin_app(
             "rows": rows,
             "current_path": current_path,
             "breadcrumbs": breadcrumbs,
+            "active_handler_count": len(handler_registry.all()),
             "parent_url": (
                 f"/browser/cache?{urlencode({'path': parent_path})}"
                 if parent_path is not None
@@ -722,6 +763,40 @@ def create_admin_app(
             ),
         }
         return templates.TemplateResponse(request, "browser_cache.html", context)
+
+    @app.get("/browser/cache/handlers", response_class=HTMLResponse)
+    async def browser_cache_handlers(request: Request) -> Any:
+        require_session(request)
+        settings = browser_settings()
+        if settings is None:
+            raise HTTPException(status_code=404, detail="Cache directory not found")
+        rows = await asyncio.to_thread(
+            _scan_handled_cache_files, settings.tdlib_data_dir, handler_registry
+        )
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row["handler_id"]] = counts.get(row["handler_id"], 0) + 1
+            archive_parameters = {
+                "path": row["relative_path"],
+                "handler": row["handler_id"],
+            }
+            row["url"] = f"/browser/cache/archive?{urlencode(archive_parameters)}"
+        configured_handlers = [
+            {
+                "handler_id": handler.handler_id,
+                "label": handler.label,
+                "description": handler.description,
+                "detection": handler.detection,
+                "configuration": handler.configuration(),
+                "matched_count": counts.get(handler.handler_id, 0),
+            }
+            for handler in handler_registry.all()
+        ]
+        return templates.TemplateResponse(
+            request,
+            "browser_handlers.html",
+            {"handlers": configured_handlers, "rows": rows},
+        )
 
     @app.get("/browser/cache/archive", response_class=HTMLResponse)
     async def browser_cache_archive(

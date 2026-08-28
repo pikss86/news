@@ -31,6 +31,8 @@ class ArchiveMember:
 class StreamingFileHandler(Protocol):
     handler_id: str
     label: str
+    description: str
+    detection: str
 
     def matches(self, path: Path) -> bool: ...
 
@@ -39,6 +41,8 @@ class StreamingFileHandler(Protocol):
     def member(self, path: Path, member_path: str) -> ArchiveMember: ...
 
     def stream(self, path: Path, member: ArchiveMember) -> AsyncIterator[bytes]: ...
+
+    def configuration(self) -> dict[str, str | int | float]: ...
 
 
 def _safe_archive_path(value: str, *, allow_empty: bool = False) -> str | None:
@@ -61,6 +65,8 @@ def _safe_archive_path(value: str, *, allow_empty: bool = False) -> str | None:
 class ZipStreamHandler:
     handler_id = "zip"
     label = "ZIP-архив"
+    description = "Показывает дерево ZIP и отдаёт выбранный вложенный файл потоком."
+    detection = "Расширение .zip или сигнатура PK в содержимом файла"
 
     def __init__(
         self,
@@ -166,6 +172,14 @@ class ZipStreamHandler:
                     break
                 yield chunk
 
+    def configuration(self) -> dict[str, str | int | float]:
+        return {
+            "Максимальный размер вложенного файла": self.max_member_size,
+            "Максимальный коэффициент сжатия": self.max_compression_ratio,
+            "Максимальное количество записей": self.max_entries,
+            "Размер потокового блока": self.chunk_size,
+        }
+
 
 class FileHandlerRegistry:
     def __init__(self, handlers: Iterable[StreamingFileHandler] = ()) -> None:
@@ -183,3 +197,6 @@ class FileHandlerRegistry:
 
     def get(self, handler_id: str) -> StreamingFileHandler | None:
         return self._handlers.get(handler_id)
+
+    def all(self) -> tuple[StreamingFileHandler, ...]:
+        return tuple(self._handlers.values())

@@ -74,6 +74,14 @@ td a small { display: block; color: #7a8596; }
 .pagination { display: flex; align-items: center; justify-content: center; gap: .75rem; margin: 1rem 0 2rem; }
 .cache-breadcrumbs { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: 0 0 1rem; padding: .75rem; border-radius: 10px; background: #fff; }
 .cache-breadcrumbs a { color: #155cc4; font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
+.handler-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.handler-card details summary { cursor: pointer; font-weight: 700; }
+.handler-card dl div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid #e3e8ef; }
+.handler-card dt { color: #526079; }
+.handler-card dd { margin: 0; font-weight: 700; text-align: right; }
+.handler-badge { display: inline-block; padding: .18rem .5rem; border-radius: 999px; background: #efe3ff; color: #663399; font-size: .75rem; font-weight: 800; }
+.handled-file { background: #fbf7ff; }
+.handled-title { padding: 1rem 1rem 0; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
 .detail-grid div { display: grid; gap: .2rem; min-width: 0; }
 .detail-grid span { color: #748094; font-size: .82rem; }
@@ -135,6 +143,7 @@ td a small { display: block; color: #7a8596; }
   .row-meta { text-align: left; }
   .detail-grid { grid-template-columns: 1fr; }
   .attachment-grid { grid-template-columns: 1fr; }
+  .handler-grid { grid-template-columns: 1fr; }
   .attachment-card { align-items: flex-start; flex-wrap: wrap; }
   .file-state { width: 100%; padding-left: 2.9rem; }
   .filter-bar { align-items: stretch; flex-direction: column; }

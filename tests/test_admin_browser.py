@@ -180,6 +180,9 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         denied_cache = await client.get("/browser/cache")
         assert denied_cache.status_code == 303
         assert denied_cache.headers["location"] == "/login"
+        denied_handlers = await client.get("/browser/cache/handlers")
+        assert denied_handlers.status_code == 303
+        assert denied_handlers.headers["location"] == "/login"
 
         login_page = await client.get("/login")
         response = await client.post(
@@ -271,6 +274,15 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert "telegram-image" in cache_root.text
         assert "telegram-archive" in cache_root.text
         assert "Открыть архив" in cache_root.text
+        assert "Обработчики и найденные архивы" in cache_root.text
+
+        handlers_page = await client.get("/browser/cache/handlers")
+        assert handlers_page.status_code == 200
+        assert "Потоковые обработчики" in handlers_page.text
+        assert "ZIP-архив" in handlers_page.text
+        assert "Активен · найдено 1" in handlers_page.text
+        assert "telegram-archive" in handlers_page.text
+        assert "Расширение .zip или сигнатура PK" in handlers_page.text
 
         cache_folder = await client.get("/browser/cache", params={"path": "documents"})
         assert cache_folder.status_code == 200
