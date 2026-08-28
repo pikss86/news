@@ -57,6 +57,7 @@ async def test_all_browser_authorization_states_send_expected_requests() -> None
     client = Client()
     controller = AuthorizationController(client, settings(), Input())  # type: ignore[arg-type]
     states = [
+        "authorizationStateWaitTdlibParameters",
         "authorizationStateWaitCode",
         "authorizationStateWaitPassword",
         "authorizationStateWaitEmailAddress",
@@ -78,6 +79,10 @@ async def test_all_browser_authorization_states_send_expected_requests() -> None
         "registerUser",
         "loadChats",
     }.issubset(request_types)
+    parameters = next(
+        request for request in client.requests if request["@type"] == "setTdlibParameters"
+    )
+    assert parameters["enable_storage_optimizer"] is False
     assert controller.ready.is_set()
 
 

@@ -196,7 +196,7 @@ class AuthorizationController:
                 "system_language_code": "en",
                 "device_model": "news-collector",
                 "application_version": "0.2.0",
-                "enable_storage_optimizer": True,
+                "enable_storage_optimizer": False,
                 "ignore_file_names": False,
             }
         )

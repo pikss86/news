@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -28,6 +29,7 @@ from app.settings.store import SettingsStore, SettingsStoreError
 
 logger = logging.getLogger(__name__)
 COOKIE_NAME = "news_admin_session"
+SAFE_INLINE_MEDIA_TYPES = {"application/pdf", "text/plain"}
 NOTICES = {
     "draft-saved": "Черновик сохранён. Секретные поля защищены и поэтому не показываются повторно.",
     "checks-complete": "Проверки завершены. Результаты показаны выше.",
@@ -71,6 +73,54 @@ def _field_errors(error: ValidationError) -> dict[str, str]:
         for item in error.errors()
         if item["loc"]
     }
+
+
+def _cached_media_response(path: Path) -> FileResponse:
+    media_type = mimetypes.guess_type(path.name)[0]
+    if media_type is None:
+        with path.open("rb") as cached_file:
+            header = cached_file.read(16)
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            media_type = "image/png"
+        elif header.startswith(b"\xff\xd8\xff"):
+            media_type = "image/jpeg"
+        elif header.startswith((b"GIF87a", b"GIF89a")):
+            media_type = "image/gif"
+        elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            media_type = "image/webp"
+        elif header.startswith(b"%PDF-"):
+            media_type = "application/pdf"
+        elif len(header) >= 8 and header[4:8] == b"ftyp":
+            media_type = "video/mp4"
+        elif header.startswith(b"OggS"):
+            media_type = "audio/ogg"
+        elif header.startswith(b"ID3"):
+            media_type = "audio/mpeg"
+
+    inline = (
+        bool(
+            media_type in SAFE_INLINE_MEDIA_TYPES
+            or (media_type and media_type.startswith(("image/", "audio/", "video/")))
+        )
+        and media_type != "image/svg+xml"
+    )
+    return FileResponse(
+        path,
+        media_type=media_type if inline else "application/octet-stream",
+        filename=path.name,
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
+def _resolve_cached_file(data_directory: Path, local_path: str) -> Path | None:
+    try:
+        cache_directory = (data_directory / "files").resolve(strict=True)
+        cached_file = Path(local_path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not cached_file.is_file() or not cached_file.is_relative_to(cache_directory):
+        return None
+    return cached_file
 
 
 def _settings_from_form(form: Any, current: Settings | None, secrets_directory: Path) -> Settings:
@@ -234,14 +284,17 @@ def create_admin_app(
             status_code=status_code,
         )
 
-    def browser_database_url() -> str | None:
+    def browser_settings() -> Settings | None:
         manifest = store.manifest()
         active_revision = manifest.get("active_revision")
-        settings = (
+        return (
             store.load_revision(active_revision)
             if active_revision is not None
             else store.load_draft()
         )
+
+    def browser_database_url() -> str | None:
+        settings = browser_settings()
         return settings.database_url if settings else None
 
     async def browser_query(
@@ -502,6 +555,25 @@ def create_admin_app(
                 )
                 return RedirectResponse(f"{return_to}{separator}notice={notice}", status_code=303)
         return RedirectResponse(f"{return_to}{separator}notice=download-pending", status_code=303)
+
+    @app.get("/browser/files/{file_id}/content")
+    async def browser_file_content(request: Request, file_id: int) -> Any:
+        require_session(request)
+        settings = browser_settings()
+        if settings is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        file, error = await browser_query(lambda url: browser.file(url, file_id))
+        if error or file is None or not file.get("is_downloading_completed"):
+            raise HTTPException(status_code=404, detail="File not found")
+        local_path = file.get("local_path")
+        if not isinstance(local_path, str) or not local_path:
+            raise HTTPException(status_code=404, detail="File not found")
+        cached_file = await asyncio.to_thread(
+            _resolve_cached_file, settings.tdlib_data_dir, local_path
+        )
+        if cached_file is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return _cached_media_response(cached_file)
 
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> Any:

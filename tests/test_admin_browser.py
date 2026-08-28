@@ -1,5 +1,6 @@
 import ipaddress
 import re
+from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
 
@@ -19,6 +20,9 @@ def csrf(html: str) -> str:
 
 
 class Browser:
+    def __init__(self) -> None:
+        self.cached_path: Path | None = None
+
     async def overview(self, database_url):  # type: ignore[no-untyped-def]
         return {
             "stats": {
@@ -95,7 +99,8 @@ class Browser:
         return {
             "file_id": file_id,
             "can_be_downloaded": True,
-            "is_downloading_completed": False,
+            "is_downloading_completed": self.cached_path is not None,
+            "local_path": str(self.cached_path) if self.cached_path else None,
         }
 
     async def message(self, database_url, chat_id, message_id):  # type: ignore[no-untyped-def]
@@ -145,18 +150,20 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
 ) -> None:
     bootstrap = ensure_bootstrap(tmp_path / "secrets")
     store = SettingsStore(tmp_path / "settings", bootstrap.settings_key_file)
-    store.save_draft(settings())
+    tdlib_data_dir = tmp_path / "tdlib"
+    store.save_draft(settings(tdlib_data_dir=tdlib_data_dir))
     password_store = AdminPasswordStore(tmp_path / "settings" / "admin.json")
     password_store.set_password("a sufficiently long password")
     control = ControlChannel(tmp_path / "settings", bootstrap.control_key_file)
     control.write_status({"state": "running", "last_request_id": 0, "error": None})
+    browser = Browser()
     app = create_admin_app(
         store=store,
         control=control,
         password_store=password_store,
         network=AdminNetwork("awg0", "10.8.0.1", (ipaddress.ip_network("10.8.0.0/24"),)),
         secrets_directory=tmp_path / "secrets",
-        data_browser=Browser(),  # type: ignore[arg-type]
+        data_browser=browser,  # type: ignore[arg-type]
     )
     transport = ASGITransport(app=app, client=("10.8.0.2", 1234))
     async with AsyncClient(
@@ -165,6 +172,9 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         denied = await client.get("/browser")
         assert denied.status_code == 303
         assert denied.headers["location"] == "/login"
+        denied_file = await client.get("/browser/files/501/content")
+        assert denied_file.status_code == 303
+        assert denied_file.headers["location"] == "/login"
 
         login_page = await client.get("/login")
         response = await client.post(
@@ -213,3 +223,32 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert download.headers["location"] == "/browser/files?notice=download-pending"
         assert control.read_request()["action"] == "download_file"  # type: ignore[index]
         assert control.read_request()["file_id"] == 501  # type: ignore[index]
+
+        missing = await client.get("/browser/files/501/content")
+        assert missing.status_code == 404
+
+        cache_directory = tdlib_data_dir / "files"
+        cache_directory.mkdir(parents=True)
+        image = cache_directory / "telegram-image"
+        image.write_bytes(b"\x89PNG\r\n\x1a\nimage-data")
+        browser.cached_path = image
+
+        cached = await client.get("/browser/files/501/content")
+        assert cached.status_code == 200
+        assert cached.content == b"\x89PNG\r\n\x1a\nimage-data"
+        assert cached.headers["content-type"] == "image/png"
+        assert cached.headers["content-disposition"].startswith("inline;")
+
+        unsafe = cache_directory / "active.html"
+        unsafe.write_text("<script>alert(1)</script>")
+        browser.cached_path = unsafe
+        unsafe_response = await client.get("/browser/files/501/content")
+        assert unsafe_response.status_code == 200
+        assert unsafe_response.headers["content-type"] == "application/octet-stream"
+        assert unsafe_response.headers["content-disposition"].startswith("attachment;")
+
+        outside = tmp_path / "outside.png"
+        outside.write_bytes(b"\x89PNG\r\n\x1a\noutside")
+        browser.cached_path = outside
+        escaped = await client.get("/browser/files/501/content")
+        assert escaped.status_code == 404
