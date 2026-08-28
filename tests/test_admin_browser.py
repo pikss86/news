@@ -1,5 +1,6 @@
 import ipaddress
 import re
+import zipfile
 from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
@@ -258,11 +259,18 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         documents.mkdir()
         document = documents / "example file.pdf"
         document.write_bytes(b"%PDF-1.4 cached-document")
+        archive = cache_directory / "telegram-archive"
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr("reports/daily report.pdf", b"%PDF-1.7 clean-pdf-content")
+            bundle.writestr("reports/notes.txt", b"archive notes")
+            bundle.writestr("../outside-from-archive.pdf", b"must not be visible")
         cache_root = await client.get("/browser/cache")
         assert cache_root.status_code == 200
         assert "Кэш TDLib" in cache_root.text
         assert "documents" in cache_root.text
         assert "telegram-image" in cache_root.text
+        assert "telegram-archive" in cache_root.text
+        assert "Открыть архив" in cache_root.text
 
         cache_folder = await client.get("/browser/cache", params={"path": "documents"})
         assert cache_folder.status_code == 200
@@ -274,6 +282,45 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert cached_document.content == b"%PDF-1.4 cached-document"
         assert cached_document.headers["content-type"] == "application/pdf"
         assert cached_document.headers["content-disposition"].startswith("inline;")
+
+        archive_root = await client.get(
+            "/browser/cache/archive",
+            params={"path": "telegram-archive", "handler": "zip"},
+        )
+        assert archive_root.status_code == 200
+        assert "reports" in archive_root.text
+        assert "outside-from-archive.pdf" not in archive_root.text
+        archive_folder = await client.get(
+            "/browser/cache/archive",
+            params={
+                "path": "telegram-archive",
+                "handler": "zip",
+                "inside": "reports",
+            },
+        )
+        assert archive_folder.status_code == 200
+        assert "daily report.pdf" in archive_folder.text
+        extracted_pdf = await client.get(
+            "/browser/cache/archive/content",
+            params={
+                "path": "telegram-archive",
+                "handler": "zip",
+                "inside": "reports/daily report.pdf",
+            },
+        )
+        assert extracted_pdf.status_code == 200
+        assert extracted_pdf.content == b"%PDF-1.7 clean-pdf-content"
+        assert extracted_pdf.headers["content-type"] == "application/pdf"
+        assert extracted_pdf.headers["content-disposition"].startswith("inline;")
+        unsafe_member = await client.get(
+            "/browser/cache/archive/content",
+            params={
+                "path": "telegram-archive",
+                "handler": "zip",
+                "inside": "../outside-from-archive.pdf",
+            },
+        )
+        assert unsafe_member.status_code == 422
 
         outside = tmp_path / "outside.png"
         outside.write_bytes(b"\x89PNG\r\n\x1a\noutside")

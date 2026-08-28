@@ -8,7 +8,7 @@
 </nav>
 {% if parent_url %}<p><a class="button" href="{{ parent_url }}">← На уровень выше</a></p>{% endif %}
 <section class="card table-card"><div class="table-wrap"><table><thead><tr><th>Имя</th><th>Тип</th><th>Размер</th><th>Изменён</th><th>Действие</th></tr></thead><tbody>
-{% for item in rows %}<tr><td class="path-cell">{% if item.is_directory %}<a href="{{ item.url }}"><strong>▤ {{ item.name }}</strong></a>{% else %}▣ {{ item.name }}{% endif %}</td><td>{% if item.is_directory %}Папка{% else %}Файл{% endif %}</td><td>{% if item.size is none %}—{% else %}{{ item.size }} B{% endif %}</td><td>{{ item.modified_at }}</td><td>{% if item.is_directory %}<a class="button small-button" href="{{ item.url }}">Открыть папку</a>{% else %}<a class="button small-button" href="{{ item.url }}" target="_blank" rel="noreferrer">Открыть файл</a>{% endif %}</td></tr>
+{% for item in rows %}<tr><td class="path-cell">{% if item.is_directory %}<a href="{{ item.url }}"><strong>▤ {{ item.name }}</strong></a>{% else %}▣ {{ item.name }}{% endif %}</td><td>{% if item.is_directory %}Папка{% elif item.handler_id %}{{ item.handler_label }}{% else %}Файл{% endif %}</td><td>{% if item.size is none %}—{% else %}{{ item.size }} B{% endif %}</td><td>{{ item.modified_at }}</td><td>{% if item.is_directory %}<a class="button small-button" href="{{ item.url }}">Открыть папку</a>{% elif item.handler_id %}<a class="button small-button" href="{{ item.url }}">Открыть архив</a>{% else %}<a class="button small-button" href="{{ item.url }}" target="_blank" rel="noreferrer">Открыть файл</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="5" class="empty">Папка пуста.</td></tr>{% endfor %}
 </tbody></table></div></section>
 {% include "browser_pagination.html" %}

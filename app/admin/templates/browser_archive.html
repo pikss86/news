@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Архив {{ archive_name }}{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>{{ archive_name }}</h2><p>{{ handler_label }} · содержимое читается потоком без распаковки на диск.</p></div><a class="button" href="{{ cache_parent_url }}">Вернуться в кэш</a></section>
+<nav class="cache-breadcrumbs" aria-label="Путь внутри архива">
+{% for crumb in breadcrumbs %}{% if not loop.first %}<span>›</span>{% endif %}<a href="{{ crumb.url }}">{{ crumb.name }}</a>{% endfor %}
+</nav>
+{% if parent_url %}<p><a class="button" href="{{ parent_url }}">← На уровень выше</a></p>{% endif %}
+<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>Имя</th><th>Тип</th><th>Размер</th><th>Действие</th></tr></thead><tbody>
+{% for item in rows %}<tr><td class="path-cell">{% if item.is_directory %}<a href="{{ item.url }}"><strong>▤ {{ item.name }}</strong></a>{% else %}▣ {{ item.name }}{% endif %}</td><td>{% if item.is_directory %}Папка{% else %}Файл в архиве{% endif %}</td><td>{% if item.size is none %}—{% else %}{{ item.size }} B{% endif %}</td><td>{% if item.is_directory %}<a class="button small-button" href="{{ item.url }}">Открыть папку</a>{% else %}<a class="button small-button" href="{{ item.url }}" target="_blank" rel="noreferrer">Открыть потоком</a>{% endif %}</td></tr>
+{% else %}<tr><td colspan="4" class="empty">Папка внутри архива пуста.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% include "browser_pagination.html" %}
+{% endblock %}

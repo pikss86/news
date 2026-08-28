@@ -9,16 +9,17 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from app.admin.browser import DataBrowser
 from app.admin.checks import PreflightRunner
+from app.admin.file_handlers import FileHandlerError, FileHandlerRegistry
 from app.admin.network import AdminNetwork, VPNAccessMiddleware
 from app.admin.security import AdminPasswordStore, LoginRateLimiter, SessionManager
 from app.admin.telegram import TelegramAuthorizationSession
@@ -113,6 +114,21 @@ def _cached_media_response(path: Path) -> FileResponse:
     )
 
 
+def _stream_delivery(name: str) -> tuple[str, str]:
+    media_type = mimetypes.guess_type(name)[0]
+    inline = (
+        bool(
+            media_type in SAFE_INLINE_MEDIA_TYPES
+            or (media_type and media_type.startswith(("image/", "audio/", "video/")))
+        )
+        and media_type != "image/svg+xml"
+    )
+    return (
+        media_type if inline else "application/octet-stream",
+        "inline" if inline else "attachment",
+    )
+
+
 def _resolve_cached_file(data_directory: Path, local_path: str) -> Path | None:
     try:
         cache_directory = (data_directory / "files").resolve(strict=True)
@@ -144,7 +160,9 @@ def _resolve_cache_file(data_directory: Path, relative_path: str) -> Path | None
 
 
 def _scan_cache_directory(
-    data_directory: Path, relative_path: str
+    data_directory: Path,
+    relative_path: str,
+    handlers: FileHandlerRegistry | None = None,
 ) -> tuple[str, list[dict[str, Any]]] | None:
     directory = _resolve_cache_entry(data_directory, relative_path)
     if directory is None or not directory.is_dir():
@@ -162,13 +180,17 @@ def _scan_cache_directory(
             stat_result = resolved.stat()
         except (OSError, RuntimeError):
             continue
+        is_directory = resolved.is_dir()
+        handler = handlers.matching(resolved) if handlers and not is_directory else None
         entries.append(
             {
                 "name": child.name,
                 "relative_path": resolved.relative_to(cache_directory).as_posix(),
-                "is_directory": resolved.is_dir(),
-                "size": None if resolved.is_dir() else stat_result.st_size,
+                "is_directory": is_directory,
+                "size": None if is_directory else stat_result.st_size,
                 "modified_at": datetime.fromtimestamp(stat_result.st_mtime, UTC),
+                "handler_id": handler.handler_id if handler else None,
+                "handler_label": handler.label if handler else None,
             }
         )
     entries.sort(key=lambda item: (not item["is_directory"], item["name"].casefold()))
@@ -205,12 +227,14 @@ def create_admin_app(
     preflight: PreflightRunner | None = None,
     telegram: TelegramAuthorizationSession | None = None,
     data_browser: DataBrowser | None = None,
+    file_handlers: FileHandlerRegistry | None = None,
 ) -> FastAPI:
     sessions = SessionManager()
     limiter = LoginRateLimiter()
     runner = preflight or PreflightRunner()
     telegram_session = telegram or TelegramAuthorizationSession()
     browser = data_browser or DataBrowser()
+    handler_registry = file_handlers or FileHandlerRegistry.defaults()
     base = Path(__file__).parent
     templates = Jinja2Templates(directory=str(templates_directory or base / "templates"))
     templates.env.filters["prettyjson"] = lambda value: json.dumps(
@@ -645,7 +669,9 @@ def create_admin_app(
         settings = browser_settings()
         if settings is None or len(path) > 4096:
             raise HTTPException(status_code=404, detail="Cache directory not found")
-        scanned = await asyncio.to_thread(_scan_cache_directory, settings.tdlib_data_dir, path)
+        scanned = await asyncio.to_thread(
+            _scan_cache_directory, settings.tdlib_data_dir, path, handler_registry
+        )
         if scanned is None:
             raise HTTPException(status_code=404, detail="Cache directory not found")
         current_path, all_entries = scanned
@@ -655,11 +681,16 @@ def create_admin_app(
         rows = all_entries[start : start + per_page]
         for row in rows:
             target = urlencode({"path": row["relative_path"]})
-            row["url"] = (
-                f"/browser/cache?{target}"
-                if row["is_directory"]
-                else f"/browser/cache/content?{target}"
-            )
+            if row["is_directory"]:
+                row["url"] = f"/browser/cache?{target}"
+            elif row["handler_id"]:
+                archive_parameters = {
+                    "path": row["relative_path"],
+                    "handler": row["handler_id"],
+                }
+                row["url"] = f"/browser/cache/archive?{urlencode(archive_parameters)}"
+            else:
+                row["url"] = f"/browser/cache/content?{target}"
         breadcrumbs = [{"name": "files", "url": "/browser/cache"}]
         accumulated: list[str] = []
         for component in Path(current_path).parts if current_path else ():
@@ -691,6 +722,125 @@ def create_admin_app(
             ),
         }
         return templates.TemplateResponse(request, "browser_cache.html", context)
+
+    @app.get("/browser/cache/archive", response_class=HTMLResponse)
+    async def browser_cache_archive(
+        request: Request,
+        path: str = "",
+        handler: str = "",
+        inside: str = "",
+        page: int = 1,
+    ) -> Any:
+        require_session(request)
+        settings = browser_settings()
+        selected_handler = handler_registry.get(handler)
+        if (
+            settings is None
+            or selected_handler is None
+            or not path
+            or len(path) > 4096
+            or len(inside) > 4096
+        ):
+            raise HTTPException(status_code=404, detail="Archive not found")
+        archive = await asyncio.to_thread(_resolve_cache_file, settings.tdlib_data_dir, path)
+        if archive is None or not await asyncio.to_thread(selected_handler.matches, archive):
+            raise HTTPException(status_code=404, detail="Archive not found")
+        try:
+            all_entries = await asyncio.to_thread(selected_handler.list_directory, archive, inside)
+        except FileHandlerError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        page = max(1, page)
+        per_page = 200
+        start = (page - 1) * per_page
+        rows = all_entries[start : start + per_page]
+        for row in rows:
+            parameters = {
+                "path": path,
+                "handler": handler,
+                "inside": row.member_path,
+            }
+            row.url = (
+                f"/browser/cache/archive?{urlencode(parameters)}"
+                if row.is_directory
+                else f"/browser/cache/archive/content?{urlencode(parameters)}"
+            )
+        archive_url = f"/browser/cache/archive?{urlencode({'path': path, 'handler': handler})}"
+        breadcrumbs = [{"name": archive.name, "url": archive_url}]
+        accumulated: list[str] = []
+        for component in Path(inside).parts if inside else ():
+            accumulated.append(component)
+            breadcrumb_parameters = {
+                "path": path,
+                "handler": handler,
+                "inside": "/".join(accumulated),
+            }
+            breadcrumbs.append(
+                {
+                    "name": component,
+                    "url": f"/browser/cache/archive?{urlencode(breadcrumb_parameters)}",
+                }
+            )
+        parent_inside = Path(inside).parent.as_posix() if inside else None
+        if parent_inside == ".":
+            parent_inside = ""
+        cache_parent = Path(path).parent.as_posix()
+        if cache_parent == ".":
+            cache_parent = ""
+        parent_parameters = {"path": path, "handler": handler, "inside": parent_inside}
+        context = {
+            "archive_name": archive.name,
+            "handler_label": selected_handler.label,
+            "rows": rows,
+            "breadcrumbs": breadcrumbs,
+            "cache_parent_url": f"/browser/cache?{urlencode({'path': cache_parent})}",
+            "parent_url": (
+                f"/browser/cache/archive?{urlencode(parent_parameters)}"
+                if parent_inside is not None
+                else None
+            ),
+            "pagination": pagination(
+                "/browser/cache/archive",
+                page,
+                len(all_entries),
+                per_page,
+                {"path": path, "handler": handler, "inside": inside},
+            ),
+        }
+        return templates.TemplateResponse(request, "browser_archive.html", context)
+
+    @app.get("/browser/cache/archive/content")
+    async def browser_cache_archive_content(
+        request: Request, path: str = "", handler: str = "", inside: str = ""
+    ) -> Any:
+        require_session(request)
+        settings = browser_settings()
+        selected_handler = handler_registry.get(handler)
+        if (
+            settings is None
+            or selected_handler is None
+            or not path
+            or not inside
+            or len(path) > 4096
+            or len(inside) > 4096
+        ):
+            raise HTTPException(status_code=404, detail="Archived file not found")
+        archive = await asyncio.to_thread(_resolve_cache_file, settings.tdlib_data_dir, path)
+        if archive is None or not await asyncio.to_thread(selected_handler.matches, archive):
+            raise HTTPException(status_code=404, detail="Archived file not found")
+        try:
+            member = await asyncio.to_thread(selected_handler.member, archive, inside)
+        except FileHandlerError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        media_type, disposition = _stream_delivery(member.name)
+        encoded_name = quote(member.name, safe="")
+        return StreamingResponse(
+            selected_handler.stream(archive, member),
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"{disposition}; filename*=UTF-8''{encoded_name}",
+                "Content-Length": str(member.size),
+            },
+        )
 
     @app.get("/browser/cache/content")
     async def browser_cache_content(request: Request, path: str = "") -> Any:
