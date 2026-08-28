@@ -176,6 +176,9 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         denied_file = await client.get("/browser/files/501/content")
         assert denied_file.status_code == 303
         assert denied_file.headers["location"] == "/login"
+        denied_cache = await client.get("/browser/cache")
+        assert denied_cache.status_code == 303
+        assert denied_cache.headers["location"] == "/login"
 
         login_page = await client.get("/login")
         response = await client.post(
@@ -251,6 +254,32 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert cached.headers["content-type"] == "image/png"
         assert cached.headers["content-disposition"].startswith("inline;")
 
+        documents = cache_directory / "documents"
+        documents.mkdir()
+        document = documents / "example file.pdf"
+        document.write_bytes(b"%PDF-1.4 cached-document")
+        cache_root = await client.get("/browser/cache")
+        assert cache_root.status_code == 200
+        assert "Кэш TDLib" in cache_root.text
+        assert "documents" in cache_root.text
+        assert "telegram-image" in cache_root.text
+
+        cache_folder = await client.get("/browser/cache", params={"path": "documents"})
+        assert cache_folder.status_code == 200
+        assert "example file.pdf" in cache_folder.text
+        cached_document = await client.get(
+            "/browser/cache/content", params={"path": "documents/example file.pdf"}
+        )
+        assert cached_document.status_code == 200
+        assert cached_document.content == b"%PDF-1.4 cached-document"
+        assert cached_document.headers["content-type"] == "application/pdf"
+        assert cached_document.headers["content-disposition"].startswith("inline;")
+
+        outside = tmp_path / "outside.png"
+        outside.write_bytes(b"\x89PNG\r\n\x1a\noutside")
+        traversal = await client.get("/browser/cache/content", params={"path": "../outside.png"})
+        assert traversal.status_code == 404
+
         unsafe = cache_directory / "active.html"
         unsafe.write_text("<script>alert(1)</script>")
         browser.cached_path = unsafe
@@ -259,8 +288,6 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert unsafe_response.headers["content-type"] == "application/octet-stream"
         assert unsafe_response.headers["content-disposition"].startswith("attachment;")
 
-        outside = tmp_path / "outside.png"
-        outside.write_bytes(b"\x89PNG\r\n\x1a\noutside")
         browser.cached_path = outside
         escaped = await client.get("/browser/files/501/content")
         assert escaped.status_code == 404

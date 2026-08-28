@@ -72,6 +72,8 @@ td a { color: #155cc4; text-decoration: none; }
 td a small { display: block; color: #7a8596; }
 .path-cell { max-width: 320px; overflow-wrap: anywhere; }
 .pagination { display: flex; align-items: center; justify-content: center; gap: .75rem; margin: 1rem 0 2rem; }
+.cache-breadcrumbs { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: 0 0 1rem; padding: .75rem; border-radius: 10px; background: #fff; }
+.cache-breadcrumbs a { color: #155cc4; font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
 .detail-grid div { display: grid; gap: .2rem; min-width: 0; }
 .detail-grid span { color: #748094; font-size: .82rem; }

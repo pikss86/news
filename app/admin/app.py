@@ -6,6 +6,7 @@ import logging
 import mimetypes
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -121,6 +122,57 @@ def _resolve_cached_file(data_directory: Path, local_path: str) -> Path | None:
     if not cached_file.is_file() or not cached_file.is_relative_to(cache_directory):
         return None
     return cached_file
+
+
+def _resolve_cache_entry(data_directory: Path, relative_path: str) -> Path | None:
+    try:
+        cache_directory = (data_directory / "files").resolve(strict=True)
+        requested = Path(relative_path)
+        if requested.is_absolute():
+            return None
+        entry = (cache_directory / requested).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not entry.is_relative_to(cache_directory):
+        return None
+    return entry
+
+
+def _resolve_cache_file(data_directory: Path, relative_path: str) -> Path | None:
+    entry = _resolve_cache_entry(data_directory, relative_path)
+    return entry if entry is not None and entry.is_file() else None
+
+
+def _scan_cache_directory(
+    data_directory: Path, relative_path: str
+) -> tuple[str, list[dict[str, Any]]] | None:
+    directory = _resolve_cache_entry(data_directory, relative_path)
+    if directory is None or not directory.is_dir():
+        return None
+    cache_directory = (data_directory / "files").resolve(strict=True)
+    current_path = directory.relative_to(cache_directory).as_posix()
+    if current_path == ".":
+        current_path = ""
+    entries: list[dict[str, Any]] = []
+    for child in directory.iterdir():
+        try:
+            resolved = child.resolve(strict=True)
+            if not resolved.is_relative_to(cache_directory):
+                continue
+            stat_result = resolved.stat()
+        except (OSError, RuntimeError):
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "relative_path": resolved.relative_to(cache_directory).as_posix(),
+                "is_directory": resolved.is_dir(),
+                "size": None if resolved.is_dir() else stat_result.st_size,
+                "modified_at": datetime.fromtimestamp(stat_result.st_mtime, UTC),
+            }
+        )
+    entries.sort(key=lambda item: (not item["is_directory"], item["name"].casefold()))
+    return current_path, entries
 
 
 def _settings_from_form(form: Any, current: Settings | None, secrets_directory: Path) -> Settings:
@@ -586,6 +638,70 @@ def create_admin_app(
                 )
                 return RedirectResponse(f"{return_to}{separator}notice={notice}", status_code=303)
         return RedirectResponse(f"{return_to}{separator}notice=download-pending", status_code=303)
+
+    @app.get("/browser/cache", response_class=HTMLResponse)
+    async def browser_cache(request: Request, path: str = "", page: int = 1) -> Any:
+        require_session(request)
+        settings = browser_settings()
+        if settings is None or len(path) > 4096:
+            raise HTTPException(status_code=404, detail="Cache directory not found")
+        scanned = await asyncio.to_thread(_scan_cache_directory, settings.tdlib_data_dir, path)
+        if scanned is None:
+            raise HTTPException(status_code=404, detail="Cache directory not found")
+        current_path, all_entries = scanned
+        page = max(1, page)
+        per_page = 200
+        start = (page - 1) * per_page
+        rows = all_entries[start : start + per_page]
+        for row in rows:
+            target = urlencode({"path": row["relative_path"]})
+            row["url"] = (
+                f"/browser/cache?{target}"
+                if row["is_directory"]
+                else f"/browser/cache/content?{target}"
+            )
+        breadcrumbs = [{"name": "files", "url": "/browser/cache"}]
+        accumulated: list[str] = []
+        for component in Path(current_path).parts if current_path else ():
+            accumulated.append(component)
+            breadcrumbs.append(
+                {
+                    "name": component,
+                    "url": f"/browser/cache?{urlencode({'path': '/'.join(accumulated)})}",
+                }
+            )
+        parent_path = Path(current_path).parent.as_posix() if current_path else None
+        if parent_path == ".":
+            parent_path = ""
+        context = {
+            "rows": rows,
+            "current_path": current_path,
+            "breadcrumbs": breadcrumbs,
+            "parent_url": (
+                f"/browser/cache?{urlencode({'path': parent_path})}"
+                if parent_path is not None
+                else None
+            ),
+            "pagination": pagination(
+                "/browser/cache",
+                page,
+                len(all_entries),
+                per_page,
+                {"path": current_path},
+            ),
+        }
+        return templates.TemplateResponse(request, "browser_cache.html", context)
+
+    @app.get("/browser/cache/content")
+    async def browser_cache_content(request: Request, path: str = "") -> Any:
+        require_session(request)
+        settings = browser_settings()
+        if settings is None or not path or len(path) > 4096:
+            raise HTTPException(status_code=404, detail="Cached file not found")
+        cached_file = await asyncio.to_thread(_resolve_cache_file, settings.tdlib_data_dir, path)
+        if cached_file is None:
+            raise HTTPException(status_code=404, detail="Cached file not found")
+        return _cached_media_response(cached_file)
 
     @app.get("/browser/files/{file_id}/content")
     async def browser_file_content(request: Request, file_id: int) -> Any:
