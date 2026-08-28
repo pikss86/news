@@ -85,6 +85,8 @@ td a small { display: block; color: #7a8596; }
 .tree-content { display: grid; min-width: 0; gap: .25rem; padding: .45rem .65rem; border-radius: 9px; color: #172033; text-decoration: none; }
 .tree-content:hover { background: #f2f6fc; }
 .tree-content small { color: #748094; font-weight: 400; }
+.history-loader { display: grid; justify-items: center; gap: .55rem; padding: 1rem .5rem .2rem; text-align: center; }
+.history-loader p { margin: 0; }
 .attachment-children { display: grid; gap: .45rem; margin: .35rem 0 0 2.2rem; padding-left: .8rem; border-left: 2px dashed #d7e0ec; }
 .attachment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
 .attachment-card { display: flex; align-items: center; gap: .7rem; min-width: 0; padding: .8rem; border: 1px solid #dce2eb; border-radius: 10px; background: #f8fafc; }

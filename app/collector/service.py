@@ -29,6 +29,7 @@ class CollectorService:
         download_priority: int = 16,
         on_persisted_update: Callable[[], Awaitable[None] | None] | None = None,
         on_started: Callable[[], Awaitable[None] | None] | None = None,
+        on_history_loaded: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> None:
         self.client = client
         self.database = database
@@ -38,6 +39,7 @@ class CollectorService:
         self.download_priority = download_priority
         self.on_persisted_update = on_persisted_update
         self.on_started = on_started
+        self.on_history_loaded = on_history_loaded
         self._stopping = asyncio.Event()
         self._started_notified = False
         self._download_aliases: dict[int, int] = {}
@@ -71,6 +73,7 @@ class CollectorService:
         await self.authorization.handle(update)
         if persisted:
             await self._call(self.on_persisted_update)
+            await self._handle_history_response(update)
         if update.get("@type") == "error" and not self.authorization.ready.is_set():
             code = update.get("code", "unknown")
             raise FatalCollectorError(f"TDLib authorization failed with code {code}")
@@ -140,6 +143,62 @@ class CollectorService:
             return True
         self._send_download_request(file_id, file_id)
         return True
+
+    def request_chat_history(
+        self, chat_id: int, from_message_id: int, limit: int, request_id: int
+    ) -> None:
+        """Ask TDLib for the next reverse-chronological page of a chat history."""
+        if not self.authorization.ready.is_set():
+            raise RuntimeError("TDLib must be authorized to load chat history")
+        self.client.send(
+            {
+                "@type": "getChatHistory",
+                "chat_id": chat_id,
+                "from_message_id": from_message_id,
+                "offset": 0,
+                "limit": limit,
+                "only_local": False,
+                "@extra": {
+                    "request": "chat_history",
+                    "control_request_id": request_id,
+                    "chat_id": chat_id,
+                    "from_message_id": from_message_id,
+                },
+            }
+        )
+        logger.info(
+            "chat history requested",
+            extra={
+                "chat_id": chat_id,
+                "from_message_id": from_message_id,
+                "limit": limit,
+                "request_id": request_id,
+            },
+        )
+
+    async def _handle_history_response(self, update: dict[str, Any]) -> None:
+        extra = update.get("@extra") or {}
+        if extra.get("request") != "chat_history":
+            return
+        messages = update.get("messages") if update.get("@type") == "messages" else None
+        message_ids = [
+            message["id"]
+            for message in messages or []
+            if isinstance(message, dict) and isinstance(message.get("id"), int)
+        ]
+        result = {
+            "request_id": int(extra["control_request_id"]),
+            "chat_id": int(extra["chat_id"]),
+            "count": len(messages or []),
+            "oldest_message_id": min(message_ids) if message_ids else None,
+            "total_count": update.get("total_count"),
+            "error": (
+                f"TDLib {update.get('code', 'unknown')}: {update.get('message', 'request failed')}"
+                if update.get("@type") == "error"
+                else None
+            ),
+        }
+        await self._call_with(self.on_history_loaded, result)
 
     def _send_download_request(self, file_id: int, source_file_id: int) -> None:
         self.client.send(
@@ -236,5 +295,16 @@ class CollectorService:
         if callback is None:
             return
         result = callback()
+        if inspect.isawaitable(result):
+            await result
+
+    @staticmethod
+    async def _call_with(
+        callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+        value: dict[str, Any],
+    ) -> None:
+        if callback is None:
+            return
+        result = callback(value)
         if inspect.isawaitable(result):
             await result

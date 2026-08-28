@@ -129,7 +129,9 @@ class DataBrowser:
             """
             SELECT c.*,
                    (SELECT count(*) FROM telegram_messages m WHERE m.chat_id = c.chat_id)
-                     AS message_count
+                     AS message_count,
+                   (SELECT min(m.message_id) FROM telegram_messages m
+                     WHERE m.chat_id = c.chat_id) AS oldest_message_id
               FROM telegram_chats c
              WHERE c.chat_id = :chat_id
             """,

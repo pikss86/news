@@ -29,6 +29,14 @@ class Authorization:
             self.ready.set()
 
 
+class Client:
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+
+    def send(self, request):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+
+
 async def test_tdlib_error_before_authorization_is_fatal_but_preserved() -> None:
     repository = Repository()
     persisted = 0
@@ -77,3 +85,55 @@ async def test_started_callback_runs_only_after_tdlib_is_ready() -> None:
     await service._process(ready)
     await service._process({"@type": "updateOption"})
     assert started == 1
+
+
+async def test_chat_history_request_and_response_preserve_tdlib_batch() -> None:
+    client = Client()
+    authorization = Authorization()
+    authorization.ready.set()
+    repository = Repository()
+    results: list[dict] = []
+    service = CollectorService(
+        client,  # type: ignore[arg-type]
+        Database(),  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        authorization,  # type: ignore[arg-type]
+        on_history_loaded=results.append,
+    )
+
+    service.request_chat_history(-100123, 200, 100, 17)
+    assert client.requests == [
+        {
+            "@type": "getChatHistory",
+            "chat_id": -100123,
+            "from_message_id": 200,
+            "offset": 0,
+            "limit": 100,
+            "only_local": False,
+            "@extra": {
+                "request": "chat_history",
+                "control_request_id": 17,
+                "chat_id": -100123,
+                "from_message_id": 200,
+            },
+        }
+    ]
+    response = {
+        "@type": "messages",
+        "total_count": 900,
+        "messages": [{"@type": "message", "id": 200}, {"@type": "message", "id": 100}],
+        "@extra": client.requests[0]["@extra"],
+    }
+    await service._process(response)
+
+    assert repository.updates[-1] == response
+    assert results == [
+        {
+            "request_id": 17,
+            "chat_id": -100123,
+            "count": 2,
+            "oldest_message_id": 100,
+            "total_count": 900,
+            "error": None,
+        }
+    ]

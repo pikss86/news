@@ -3,6 +3,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from app.collector.service import CollectorService
 from app.config import Settings, get_settings
@@ -38,6 +39,7 @@ def create_collector(
     authorization_input: AuthorizationInput | None = None,
     on_persisted_update: Callable[[], Awaitable[None] | None] | None = None,
     on_started: Callable[[], Awaitable[None] | None] | None = None,
+    on_history_loaded: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
 ) -> CollectorRuntime:
     configure_logging(settings.log_level)
     client = TdJsonClient(settings.tdlib_library_path)
@@ -62,6 +64,7 @@ def create_collector(
         download_priority=settings.telegram_media_download_priority,
         on_persisted_update=on_persisted_update,
         on_started=on_started,
+        on_history_loaded=on_history_loaded,
     )
     return CollectorRuntime(client, database, service)
 

@@ -393,6 +393,37 @@ def create_admin_app(
             {**data, "csrf_token": sessions.issue_csrf(token)},
         )
 
+    @app.post("/browser/chats/{chat_id}/history")
+    async def browser_chat_history(request: Request, chat_id: int) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        return_to = f"/browser/chats/{chat_id}"
+        collector_status = control.read_status()
+        if collector_status.get("state") != "running":
+            return RedirectResponse(f"{return_to}?notice=collector-stopped", status_code=303)
+        data, error = await browser_query(lambda url: browser.chat(url, chat_id))
+        if error or data is None:
+            return RedirectResponse(f"{return_to}?notice=chat-missing", status_code=303)
+        from_message_id = int(data["chat"].get("oldest_message_id") or 0)
+        request_id = control.request_chat_history(chat_id, from_message_id, 100)
+        for _ in range(100):
+            await asyncio.sleep(0.1)
+            current_status = control.read_status()
+            if int(current_status.get("last_history_request_id", 0)) != request_id:
+                continue
+            if current_status.get("last_history_error"):
+                notice = "history-failed"
+            elif int(current_status.get("last_history_count", 0)) == 0:
+                notice = "history-empty"
+            else:
+                notice = "history-loaded"
+            count = int(current_status.get("last_history_count", 0))
+            return RedirectResponse(
+                f"{return_to}?{urlencode({'notice': notice, 'count': count})}",
+                status_code=303,
+            )
+        return RedirectResponse(f"{return_to}?notice=history-pending", status_code=303)
+
     @app.get("/browser/messages", response_class=HTMLResponse)
     async def browser_messages(
         request: Request,

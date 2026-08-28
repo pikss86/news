@@ -24,6 +24,10 @@ def message_file_objects(update: dict[str, Any]) -> list[dict[str, Any]]:
         return extract_file_objects(update.get("message", {}).get("content"))
     if event_type == "updateMessageContent":
         return extract_file_objects(update.get("new_content"))
+    if event_type == "messages" and (update.get("@extra") or {}).get("request") == "chat_history":
+        return extract_file_objects(
+            [message.get("content") for message in update.get("messages", [])]
+        )
     return []
 
 

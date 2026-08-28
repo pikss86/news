@@ -75,6 +75,7 @@ class Browser:
                 "title": "News chat",
                 "chat_type": "channel",
                 "message_count": 1,
+                "oldest_message_id": 20,
                 "first_collected_at": "then",
                 "last_collected_at": "now",
                 "raw_chat": {},
@@ -195,6 +196,7 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert chat.status_code == 200
         assert "Чат → сообщение → прикреплённые файлы" in chat.text
         assert "Скачать" in chat.text
+        assert "Загрузить ещё 100 из Telegram" in chat.text
 
         message = await client.get("/browser/messages/10/20")
         assert message.status_code == 200
@@ -211,6 +213,16 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
             return None
 
         monkeypatch.setattr("app.admin.app.asyncio.sleep", no_wait)
+        history = await client.post(
+            "/browser/chats/10/history",
+            data={"csrf_token": csrf(chat.text)},
+        )
+        assert history.status_code == 303
+        assert history.headers["location"] == "/browser/chats/10?notice=history-pending"
+        assert control.read_request()["action"] == "load_chat_history"  # type: ignore[index]
+        assert control.read_request()["chat_id"] == 10  # type: ignore[index]
+        assert control.read_request()["from_message_id"] == 20  # type: ignore[index]
+
         dashboard = await client.get("/")
         download = await client.post(
             "/browser/files/501/download",

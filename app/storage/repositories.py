@@ -119,6 +119,29 @@ class UpdateRepository:
                 extra={"chat_id": message["chat_id"], "message_id": message["id"]},
             )
             return
+        if (
+            event_type == "messages"
+            and (update.get("@extra") or {}).get("request") == "chat_history"
+        ):
+            messages = update.get("messages") or []
+            for message in messages:
+                await self._ensure_chat(session, message["chat_id"], observed_at)
+                await self._store_snapshot(
+                    session,
+                    snapshot_from_message(message),
+                    event_id,
+                    observed_at,
+                    "history",
+                )
+                await self._upsert_files_from_content(session, message.get("content"), observed_at)
+            logger.info(
+                "chat history normalized",
+                extra={
+                    "chat_id": (update.get("@extra") or {}).get("chat_id"),
+                    "message_count": len(messages),
+                },
+            )
+            return
         if event_type == "updateMessageContent":
             current = await self._current_or_empty(
                 session, update["chat_id"], update["message_id"], event_id, observed_at
@@ -484,4 +507,6 @@ class UpdateRepository:
         message = update.get("message")
         if isinstance(message, dict):
             return message.get("chat_id"), message.get("id")
+        if update.get("@type") == "messages":
+            return (update.get("@extra") or {}).get("chat_id"), None
         return update.get("chat_id"), update.get("message_id")

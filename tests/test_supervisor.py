@@ -13,6 +13,7 @@ class Service:
     stopped: bool = False
     dynamic: tuple[bool, int] | None = None
     downloaded_file_id: int | None = None
+    history_request: tuple[int, int, int, int] | None = None
 
     def stop(self) -> None:
         self.stopped = True
@@ -26,12 +27,18 @@ class Service:
         self.downloaded_file_id = file_id
         return True
 
+    def request_chat_history(
+        self, chat_id: int, from_message_id: int, limit: int, request_id: int
+    ) -> None:
+        self.history_request = (chat_id, from_message_id, limit, request_id)
+
 
 class Runtime:
-    def __init__(self, *, on_persisted_update, on_started) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, *, on_persisted_update, on_started, on_history_loaded) -> None:  # type: ignore[no-untyped-def]
         self.service = Service()
         self.on_persisted_update = on_persisted_update
         self.on_started = on_started
+        self.on_history_loaded = on_history_loaded
         self.finished = asyncio.Event()
         self.stop_event = asyncio.Event()
 
@@ -90,13 +97,26 @@ async def test_supervisor_lifecycle_last_update_dynamic_restart_and_idempotency(
     assert created[0].service.downloaded_file_id == 501
     assert control.read_status()["last_download_file_id"] == 501
 
-    await supervisor.process_request({"request_id": 2, "action": "start", "revision": first})
+    await supervisor.process_request(
+        {
+            "request_id": 3,
+            "action": "load_chat_history",
+            "chat_id": -100123,
+            "from_message_id": 200,
+            "limit": 100,
+            "revision": None,
+        }
+    )
+    assert created[0].service.history_request == (-100123, 200, 100, 3)
+    assert control.read_status()["last_history_pending_request_id"] == 3
+
+    await supervisor.process_request({"request_id": 3, "action": "start", "revision": first})
     assert len(created) == 1
 
     dynamic = store.save_draft(settings(telegram_download_media=True, log_level="DEBUG"))
     checks(store, dynamic)
     store.activate_draft()
-    await supervisor.process_request({"request_id": 3, "action": "start", "revision": dynamic})
+    await supervisor.process_request({"request_id": 4, "action": "start", "revision": dynamic})
     assert len(created) == 1
     assert created[0].service.dynamic == (True, 16)
     assert store.manifest()["applied_revision"] == dynamic
@@ -104,12 +124,12 @@ async def test_supervisor_lifecycle_last_update_dynamic_restart_and_idempotency(
     restarted = store.save_draft(settings(telegram_api_id=67890))
     checks(store, restarted)
     store.activate_draft()
-    await supervisor.process_request({"request_id": 4, "action": "start", "revision": restarted})
+    await supervisor.process_request({"request_id": 5, "action": "start", "revision": restarted})
     assert len(created) == 2
     assert created[0].finished.is_set()
     assert len(migrations) == 2
 
-    await supervisor.process_request({"request_id": 5, "action": "stop", "revision": None})
+    await supervisor.process_request({"request_id": 6, "action": "stop", "revision": None})
     assert control.read_status()["state"] == "stopped"
     assert created[1].finished.is_set()
 

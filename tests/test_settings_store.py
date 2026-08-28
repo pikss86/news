@@ -99,6 +99,13 @@ def test_signed_monotonic_control_and_damaged_files(tmp_path) -> None:
     assert control.request_download(501) == 3
     assert control.read_request()["action"] == "download_file"  # type: ignore[index]
     assert control.read_request()["file_id"] == 501  # type: ignore[index]
+    assert control.request_chat_history(-100123, 200) == 4
+    history = control.read_request()
+    assert history is not None
+    assert history["action"] == "load_chat_history"
+    assert history["chat_id"] == -100123
+    assert history["from_message_id"] == 200
+    assert history["limit"] == 100
 
     document = json.loads(control.control_path.read_text())
     document["payload"]["action"] = "restart"

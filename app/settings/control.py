@@ -9,8 +9,8 @@ from typing import Any, Literal
 
 from app.settings.store import SettingsStoreError, atomic_write, canonical_json, locked_file
 
-ControlAction = Literal["start", "stop", "restart", "download_file"]
-ALLOWED_ACTIONS = frozenset({"start", "stop", "restart", "download_file"})
+ControlAction = Literal["start", "stop", "restart", "download_file", "load_chat_history"]
+ALLOWED_ACTIONS = frozenset({"start", "stop", "restart", "download_file", "load_chat_history"})
 
 
 class ControlChannel:
@@ -37,6 +37,9 @@ class ControlChannel:
         *,
         file_id: int | None = None,
         remote_file_id: str | None = None,
+        chat_id: int | None = None,
+        from_message_id: int | None = None,
+        limit: int = 100,
     ) -> int:
         if action not in ALLOWED_ACTIONS:
             raise ValueError("unsupported control action")
@@ -55,12 +58,30 @@ class ControlChannel:
                 payload["file_id"] = file_id
                 if remote_file_id:
                     payload["remote_file_id"] = remote_file_id
+            if action == "load_chat_history":
+                if chat_id is None or chat_id == 0:
+                    raise ValueError("load_chat_history requires a non-zero chat_id")
+                if from_message_id is None or from_message_id < 0:
+                    raise ValueError("load_chat_history requires a non-negative from_message_id")
+                if not 1 <= limit <= 100:
+                    raise ValueError("chat history limit must be between 1 and 100")
+                payload.update(
+                    {"chat_id": chat_id, "from_message_id": from_message_id, "limit": limit}
+                )
             document = {"payload": payload, "signature": self._sign(payload)}
             atomic_write(self.control_path, canonical_json(document) + b"\n")
             return request_id
 
     def request_download(self, file_id: int, remote_file_id: str | None = None) -> int:
         return self.request("download_file", file_id=file_id, remote_file_id=remote_file_id)
+
+    def request_chat_history(self, chat_id: int, from_message_id: int, limit: int = 100) -> int:
+        return self.request(
+            "load_chat_history",
+            chat_id=chat_id,
+            from_message_id=from_message_id,
+            limit=limit,
+        )
 
     def read_request(self, *, verify: bool = True) -> dict[str, Any] | None:
         if not self.control_path.exists():
@@ -77,6 +98,15 @@ class ControlChannel:
             not isinstance(payload.get("file_id"), int) or payload["file_id"] <= 0
         ):
             raise SettingsStoreError("download request has an invalid file id")
+        if payload.get("action") == "load_chat_history" and (
+            not isinstance(payload.get("chat_id"), int)
+            or payload["chat_id"] == 0
+            or not isinstance(payload.get("from_message_id"), int)
+            or payload["from_message_id"] < 0
+            or not isinstance(payload.get("limit"), int)
+            or not 1 <= payload["limit"] <= 100
+        ):
+            raise SettingsStoreError("chat history request is invalid")
         remote_file_id = payload.get("remote_file_id")
         if remote_file_id is not None and (
             not isinstance(remote_file_id, str) or not remote_file_id or len(remote_file_id) > 2048

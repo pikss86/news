@@ -13,3 +13,8 @@
 {% if notice == 'download-failed' %}<p class="auth-error">Telegram не принял запрос на скачивание файла.</p>{% endif %}
 {% if notice == 'collector-stopped' %}<p class="auth-error">Сначала запустите collector на странице настроек.</p>{% endif %}
 {% if notice == 'file-missing' %}<p class="auth-error">Файл больше не найден в базе.</p>{% endif %}
+{% if notice == 'history-loaded' %}<p class="notice">Telegram вернул сообщений: {{ request.query_params.get('count', '0') }}. Они сохранены вместе с исходным ответом TDLib.</p>{% endif %}
+{% if notice == 'history-empty' %}<p class="notice">Более ранних доступных сообщений Telegram не вернул.</p>{% endif %}
+{% if notice == 'history-pending' %}<p class="notice">История запрошена. Обновите страницу через несколько секунд.</p>{% endif %}
+{% if notice == 'history-failed' %}<p class="auth-error">Не удалось загрузить историю. Проверьте состояние collector и его журнал.</p>{% endif %}
+{% if notice == 'chat-missing' %}<p class="auth-error">Чат больше не найден в базе.</p>{% endif %}

@@ -52,6 +52,21 @@ async def test_repository_versioning_and_idempotency() -> None:
             assert await repository.process(
                 session, {"@type": "updateFutureThing", "future_field": 42}
             )
+            history_message = new_message_update("Historical message")["message"]
+            history_message["id"] = 150
+            history_response = {
+                "@type": "messages",
+                "total_count": 1,
+                "messages": [history_message],
+                "@extra": {
+                    "request": "chat_history",
+                    "control_request_id": 9,
+                    "chat_id": -100123,
+                    "from_message_id": 200,
+                },
+            }
+            assert await repository.process(session, history_response)
+            assert not await repository.process(session, history_response)
             assert await repository.process(
                 session,
                 {"@type": "updateNewMessage", "message": {"chat_id": -100123}},
@@ -82,13 +97,14 @@ async def test_repository_versioning_and_idempotency() -> None:
             )
             downloaded_file = await session.get(TelegramFile, 501)
             pending_file = await session.get(TelegramFile, 502)
+            historical = await session.get(TelegramMessage, (-100123, 150))
 
         assert message is not None
         assert message.current_version == 3
         assert message.is_deleted
         assert message.text == "Text B"
         assert version_count == 3
-        assert raw_event_count == 7
+        assert raw_event_count == 8
         assert [version.change_type for version in versions] == ["created", "edited", "deleted"]
         assert versions[0].snapshot["text"] == "Text A"
         assert versions[1].snapshot["text"] == "Text B"
@@ -99,6 +115,9 @@ async def test_repository_versioning_and_idempotency() -> None:
         assert downloaded_file.download_completed_at is not None
         assert pending_file is not None
         assert pending_file.download_requested_at is not None
+        assert historical is not None
+        assert historical.text == "Historical message"
+        assert historical.current_version == 1
     finally:
         await engine.dispose()
         async with admin_engine.begin() as connection:

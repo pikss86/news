@@ -56,6 +56,7 @@ class CollectorSupervisor:
     def _write_status(self, **changes: Any) -> None:
         previous = self.control.read_status()
         status = {
+            **previous,
             "state": previous.get("state", "stopped"),
             "desired_state": self.desired_state,
             "last_request_id": self.last_request_id,
@@ -69,6 +70,18 @@ class CollectorSupervisor:
 
     async def _on_update(self) -> None:
         self._write_status(last_update_at=datetime.now(UTC).isoformat())
+
+    async def _on_history_loaded(self, result: dict[str, Any]) -> None:
+        self._write_status(
+            last_history_request_id=result["request_id"],
+            last_history_pending_request_id=None,
+            last_history_chat_id=result["chat_id"],
+            last_history_count=result["count"],
+            last_history_oldest_message_id=result["oldest_message_id"],
+            last_history_total_count=result["total_count"],
+            last_history_error=result["error"],
+            last_history_completed_at=datetime.now(UTC).isoformat(),
+        )
 
     async def _worker_done(self, task: asyncio.Task[None]) -> None:
         if self.worker is not task:
@@ -143,6 +156,7 @@ class CollectorSupervisor:
             authorization_input=NonInteractiveAuthorizationInput(),
             on_persisted_update=self._on_update,
             on_started=on_started,
+            on_history_loaded=self._on_history_loaded,
         )
         worker = asyncio.create_task(runtime.run(), name="telegram-ingestion-worker")
         self.runtime = runtime
@@ -215,6 +229,34 @@ class CollectorSupervisor:
                 self._write_status(
                     last_download_file_id=file_id,
                     last_download_error=f"{type(error).__name__}: download request failed",
+                )
+            return
+        if action == "load_chat_history":
+            chat_id = int(request["chat_id"])
+            try:
+                if self.runtime is None or self.worker is None or self.worker.done():
+                    raise RuntimeError("collector must be running to load chat history")
+                self.runtime.service.request_chat_history(
+                    chat_id,
+                    int(request["from_message_id"]),
+                    int(request["limit"]),
+                    request_id,
+                )
+                self._write_status(
+                    last_history_pending_request_id=request_id,
+                    last_history_chat_id=chat_id,
+                    last_history_error=None,
+                )
+            except Exception as error:
+                logger.exception(
+                    "chat history request failed",
+                    extra={"request_id": request_id, "chat_id": chat_id},
+                )
+                self._write_status(
+                    last_history_request_id=request_id,
+                    last_history_chat_id=chat_id,
+                    last_history_count=0,
+                    last_history_error=f"{type(error).__name__}: history request failed",
                 )
             return
         try:
