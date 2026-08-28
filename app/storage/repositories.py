@@ -221,6 +221,19 @@ class UpdateRepository:
             logger.info("existing media inventory scanned", extra={"file_count": discovered})
         return discovered
 
+    async def upsert_file_object(
+        self,
+        session: AsyncSession,
+        file_object: dict[str, Any],
+        observed_at: datetime,
+        *,
+        file_id_override: int | None = None,
+    ) -> None:
+        normalized = dict(file_object)
+        if file_id_override is not None:
+            normalized["id"] = file_id_override
+        await self._upsert_file(session, normalized, observed_at, log_completion=True)
+
     async def _upsert_files_from_content(
         self, session: AsyncSession, content: Any, observed_at: datetime
     ) -> None:

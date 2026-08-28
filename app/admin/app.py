@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -327,13 +328,17 @@ def create_admin_app(
 
     @app.get("/browser/chats/{chat_id}", response_class=HTMLResponse)
     async def browser_chat(request: Request, chat_id: int) -> Any:
-        require_session(request)
+        token = require_session(request)
         data, error = await browser_query(lambda url: browser.chat(url, chat_id))
         if error:
             return browser_error(request, error)
         if data is None:
             raise HTTPException(status_code=404, detail="Chat not found")
-        return templates.TemplateResponse(request, "browser_chat.html", {"chat": data})
+        return templates.TemplateResponse(
+            request,
+            "browser_chat.html",
+            {**data, "csrf_token": sessions.issue_csrf(token)},
+        )
 
     @app.get("/browser/messages", response_class=HTMLResponse)
     async def browser_messages(
@@ -378,13 +383,17 @@ def create_admin_app(
 
     @app.get("/browser/messages/{chat_id}/{message_id}", response_class=HTMLResponse)
     async def browser_message(request: Request, chat_id: int, message_id: int) -> Any:
-        require_session(request)
+        token = require_session(request)
         data, error = await browser_query(lambda url: browser.message(url, chat_id, message_id))
         if error:
             return browser_error(request, error)
         if data is None:
             raise HTTPException(status_code=404, detail="Message not found")
-        return templates.TemplateResponse(request, "browser_message.html", data)
+        return templates.TemplateResponse(
+            request,
+            "browser_message.html",
+            {**data, "csrf_token": sessions.issue_csrf(token)},
+        )
 
     @app.get("/browser/events", response_class=HTMLResponse)
     async def browser_events(
@@ -438,7 +447,7 @@ def create_admin_app(
 
     @app.get("/browser/files", response_class=HTMLResponse)
     async def browser_files(request: Request, page: int = 1, state: str = "") -> Any:
-        require_session(request)
+        token = require_session(request)
         page = max(1, page)
         state = state if state in {"", "ready", "pending", "available"} else ""
         per_page = 50
@@ -454,8 +463,45 @@ def create_admin_app(
             "pagination": pagination(
                 "/browser/files", page, data["total"], per_page, {"state": state}
             ),
+            "csrf_token": sessions.issue_csrf(token),
         }
         return templates.TemplateResponse(request, "browser_files.html", context)
+
+    @app.post("/browser/files/{file_id}/download")
+    async def browser_download_file(request: Request, file_id: int) -> Any:
+        token = require_session(request)
+        form = await valid_csrf(request, token)
+        return_to = str(form.get("return_to", "/browser/files"))
+        if not return_to.startswith("/browser") or return_to.startswith("//"):
+            return_to = "/browser/files"
+        separator = "&" if "?" in return_to else "?"
+        collector_status = control.read_status()
+        if collector_status.get("state") != "running":
+            return RedirectResponse(
+                f"{return_to}{separator}notice=collector-stopped", status_code=303
+            )
+        file, error = await browser_query(lambda url: browser.file(url, file_id))
+        if error or file is None:
+            return RedirectResponse(f"{return_to}{separator}notice=file-missing", status_code=303)
+        if file.get("is_downloading_completed"):
+            return RedirectResponse(
+                f"{return_to}{separator}notice=already-downloaded", status_code=303
+            )
+        raw_file = file.get("raw_file") or {}
+        remote = raw_file.get("remote") or {}
+        remote_file_id = remote.get("id") if isinstance(remote.get("id"), str) else None
+        request_id = control.request_download(file_id, remote_file_id)
+        for _ in range(30):
+            await asyncio.sleep(0.1)
+            acknowledged = control.read_status()
+            if int(acknowledged.get("last_request_id", 0)) >= request_id:
+                notice = (
+                    "download-failed"
+                    if acknowledged.get("last_download_error")
+                    else "download-requested"
+                )
+                return RedirectResponse(f"{return_to}{separator}notice={notice}", status_code=303)
+        return RedirectResponse(f"{return_to}{separator}notice=download-pending", status_code=303)
 
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> Any:

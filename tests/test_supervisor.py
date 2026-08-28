@@ -12,6 +12,7 @@ from tests.factories import settings
 class Service:
     stopped: bool = False
     dynamic: tuple[bool, int] | None = None
+    downloaded_file_id: int | None = None
 
     def stop(self) -> None:
         self.stopped = True
@@ -20,6 +21,10 @@ class Service:
         self, *, download_media: bool, download_priority: int, tdlib_log_verbosity: int
     ) -> None:
         self.dynamic = (download_media, download_priority)
+
+    async def request_file_download(self, file_id: int, remote_file_id: str | None = None) -> bool:
+        self.downloaded_file_id = file_id
+        return True
 
 
 class Runtime:
@@ -79,13 +84,19 @@ async def test_supervisor_lifecycle_last_update_dynamic_restart_and_idempotency(
     assert store.manifest()["applied_revision"] == first
     assert len(created) == 1 and len(migrations) == 1
 
-    await supervisor.process_request({"request_id": 1, "action": "start", "revision": first})
+    await supervisor.process_request(
+        {"request_id": 2, "action": "download_file", "file_id": 501, "revision": None}
+    )
+    assert created[0].service.downloaded_file_id == 501
+    assert control.read_status()["last_download_file_id"] == 501
+
+    await supervisor.process_request({"request_id": 2, "action": "start", "revision": first})
     assert len(created) == 1
 
     dynamic = store.save_draft(settings(telegram_download_media=True, log_level="DEBUG"))
     checks(store, dynamic)
     store.activate_draft()
-    await supervisor.process_request({"request_id": 2, "action": "start", "revision": dynamic})
+    await supervisor.process_request({"request_id": 3, "action": "start", "revision": dynamic})
     assert len(created) == 1
     assert created[0].service.dynamic == (True, 16)
     assert store.manifest()["applied_revision"] == dynamic
@@ -93,12 +104,12 @@ async def test_supervisor_lifecycle_last_update_dynamic_restart_and_idempotency(
     restarted = store.save_draft(settings(telegram_api_id=67890))
     checks(store, restarted)
     store.activate_draft()
-    await supervisor.process_request({"request_id": 3, "action": "start", "revision": restarted})
+    await supervisor.process_request({"request_id": 4, "action": "start", "revision": restarted})
     assert len(created) == 2
     assert created[0].finished.is_set()
     assert len(migrations) == 2
 
-    await supervisor.process_request({"request_id": 4, "action": "stop", "revision": None})
+    await supervisor.process_request({"request_id": 5, "action": "stop", "revision": None})
     assert control.read_status()["state"] == "stopped"
     assert created[1].finished.is_set()
 

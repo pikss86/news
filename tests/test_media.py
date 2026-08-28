@@ -75,6 +75,42 @@ async def test_download_request_uses_configured_priority() -> None:
     ]
 
 
+async def test_manual_download_resolves_persistent_remote_file_id() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        def send(self, request: dict) -> None:
+            self.requests.append(request)
+
+    class Database:
+        async def transaction(self, operation):  # type: ignore[no-untyped-def]
+            return await operation(None)
+
+    class Repository:
+        async def queue_file_downloads(self, session, file_ids):  # type: ignore[no-untyped-def]
+            return file_ids
+
+    client = Client()
+    service = CollectorService(
+        client,  # type: ignore[arg-type]
+        Database(),  # type: ignore[arg-type]
+        Repository(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        download_media=False,
+    )
+
+    assert await service.request_file_download(501, "persistent-remote-id") is True
+    assert client.requests == [
+        {
+            "@type": "getRemoteFile",
+            "remote_file_id": "persistent-remote-id",
+            "file_type": {"@type": "fileTypeUnknown"},
+            "@extra": {"request": "resolve_media_download", "source_file_id": 501},
+        }
+    ]
+
+
 async def test_disabled_flag_does_not_request_media() -> None:
     class Client:
         def __init__(self) -> None:
@@ -112,3 +148,47 @@ async def test_disabled_flag_does_not_request_media() -> None:
     await service._process(media_message_update())
 
     assert client.requests == []
+
+
+async def test_manual_download_works_when_automatic_media_is_disabled() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        def send(self, request: dict) -> None:
+            self.requests.append(request)
+
+    class Database:
+        async def transaction(self, operation):  # type: ignore[no-untyped-def]
+            return await operation(None)
+
+    class Repository:
+        async def queue_file_downloads(self, session, file_ids):  # type: ignore[no-untyped-def]
+            return file_ids
+
+    client = Client()
+    service = CollectorService(
+        client,  # type: ignore[arg-type]
+        Database(),  # type: ignore[arg-type]
+        Repository(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        download_media=False,
+        download_priority=20,
+    )
+
+    assert await service.request_file_download(501) is True
+    assert client.requests == [
+        {
+            "@type": "downloadFile",
+            "file_id": 501,
+            "priority": 20,
+            "offset": 0,
+            "limit": 0,
+            "synchronous": False,
+            "@extra": {
+                "request": "media_download",
+                "file_id": 501,
+                "source_file_id": 501,
+            },
+        }
+    ]

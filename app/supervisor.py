@@ -192,6 +192,31 @@ class CollectorSupervisor:
             return
         self.last_request_id = request_id
         action = request["action"]
+        if action == "download_file":
+            file_id = int(request["file_id"])
+            try:
+                if self.runtime is None or self.worker is None or self.worker.done():
+                    raise RuntimeError("collector must be running to download a file")
+                queued = await self.runtime.service.request_file_download(
+                    file_id, request.get("remote_file_id")
+                )
+                if not queued:
+                    raise RuntimeError("file is unavailable or already downloaded")
+                self._write_status(
+                    last_download_file_id=file_id,
+                    last_download_requested_at=datetime.now(UTC).isoformat(),
+                    last_download_error=None,
+                )
+            except Exception as error:
+                logger.exception(
+                    "manual media download failed",
+                    extra={"request_id": request_id, "file_id": file_id},
+                )
+                self._write_status(
+                    last_download_file_id=file_id,
+                    last_download_error=f"{type(error).__name__}: download request failed",
+                )
+            return
         try:
             if action == "stop":
                 await self.stop()

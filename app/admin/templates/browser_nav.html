@@ -1,8 +1,15 @@
 <nav class="browser-nav" aria-label="Разделы данных">
-  <a href="/browser">Обзор</a>
-  <a href="/browser/chats">Чаты</a>
-  <a href="/browser/messages">Сообщения</a>
-  <a href="/browser/events">Raw events</a>
-  <a href="/browser/files">Медиа</a>
-  <a href="/">Настройки</a>
+  <a href="/browser">⌂ Обзор</a>
+  <a href="/browser/chats">▦ Чаты</a>
+  <a href="/browser/messages">≡ Сообщения</a>
+  <a href="/browser/events">{ } Raw events</a>
+  <a href="/browser/files">▣ Файлы</a>
+  <a href="/">⚙ Настройки</a>
 </nav>
+{% set notice = request.query_params.get('notice') %}
+{% if notice == 'download-requested' %}<p class="notice">Файл поставлен в очередь. Статус обновится после ответа Telegram.</p>{% endif %}
+{% if notice == 'download-pending' %}<p class="notice">Команда передана collector-у и ещё обрабатывается.</p>{% endif %}
+{% if notice == 'already-downloaded' %}<p class="notice">Файл уже находится в кэше сервиса.</p>{% endif %}
+{% if notice == 'download-failed' %}<p class="auth-error">Telegram не принял запрос на скачивание файла.</p>{% endif %}
+{% if notice == 'collector-stopped' %}<p class="auth-error">Сначала запустите collector на странице настроек.</p>{% endif %}
+{% if notice == 'file-missing' %}<p class="auth-error">Файл больше не найден в базе.</p>{% endif %}

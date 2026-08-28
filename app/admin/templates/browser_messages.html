@@ -11,7 +11,7 @@
 </form>
 <section class="card"><div class="data-list message-list">
 {% for item in rows %}<a class="data-row" href="/browser/messages/{{ item.chat_id }}/{{ item.message_id }}">
-  <span class="row-main"><strong>{{ item.chat_title or item.chat_id }}</strong><span>{{ (item.text or '[' ~ (item.content_type or 'без текста') ~ ']')|truncate(260) }}</span></span>
+  <span class="row-main"><strong>{{ item.chat_title or item.chat_id }}</strong><span>{{ (item.text or '[' ~ (item.content_type or 'без текста') ~ ']')|truncate(260) }}</span>{% if item.attachments %}<small class="attachment-count">▣ файлов: {{ item.attachments|length }}</small>{% endif %}</span>
   <span class="row-meta">{{ item.published_at or item.last_collected_at }} · v{{ item.current_version }}{% if item.edited_at %} · изменено{% endif %}{% if item.is_deleted %} · удалено{% endif %}</span>
 </a>{% else %}<p class="empty">Сообщения по выбранным условиям не найдены.</p>{% endfor %}
 </div></section>

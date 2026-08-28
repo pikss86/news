@@ -78,6 +78,25 @@ td a small { display: block; color: #7a8596; }
 .detail-grid strong { overflow-wrap: anywhere; }
 .json-view { max-height: 620px; overflow: auto; padding: 1rem; border-radius: 9px; background: #101827; color: #dce6f7; font: .82rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-body { font-size: 1.08rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hierarchy { padding-left: 1.15rem; }
+.tree-message { position: relative; padding: .3rem 0 .8rem; border-left: 2px solid #d7e0ec; }
+.tree-line { display: flex; align-items: flex-start; gap: .45rem; }
+.tree-branch { flex: 0 0 auto; margin-left: -.15rem; color: #9aa8bb; font: 1.1rem ui-monospace, monospace; }
+.tree-content { display: grid; min-width: 0; gap: .25rem; padding: .45rem .65rem; border-radius: 9px; color: #172033; text-decoration: none; }
+.tree-content:hover { background: #f2f6fc; }
+.tree-content small { color: #748094; font-weight: 400; }
+.attachment-children { display: grid; gap: .45rem; margin: .35rem 0 0 2.2rem; padding-left: .8rem; border-left: 2px dashed #d7e0ec; }
+.attachment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
+.attachment-card { display: flex; align-items: center; gap: .7rem; min-width: 0; padding: .8rem; border: 1px solid #dce2eb; border-radius: 10px; background: #f8fafc; }
+.compact-attachment { padding: .55rem .65rem; }
+.file-icon { display: grid; place-items: center; flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px; background: #dce9ff; color: #174f9f; }
+.attachment-info { display: grid; min-width: 0; flex: 1; }
+.attachment-info small { overflow: hidden; color: #748094; text-overflow: ellipsis; white-space: nowrap; }
+.file-state { flex: 0 0 auto; color: #687386; font-size: .82rem; }
+.small-button { padding: .42rem .65rem; font-size: .8rem; }
+.attachment-count { color: #316bb9; }
+.technical summary { cursor: pointer; color: #526079; font-weight: 700; }
+.technical[open] summary { margin-bottom: 1rem; }
 .versions details { padding: .6rem 0; border-bottom: 1px solid #e3e8ef; }
 .versions summary { cursor: pointer; font-weight: 700; }
 .danger-badge, .ok-badge { display: inline-block; padding: .15rem .45rem; border-radius: 999px; font-size: .75rem; vertical-align: middle; }
@@ -111,6 +130,9 @@ td a small { display: block; color: #7a8596; }
   .browser-heading .button { width: 100%; text-align: center; }
   .row-meta { text-align: left; }
   .detail-grid { grid-template-columns: 1fr; }
+  .attachment-grid { grid-template-columns: 1fr; }
+  .attachment-card { align-items: flex-start; flex-wrap: wrap; }
+  .file-state { width: 100%; padding-left: 2.9rem; }
   .filter-bar { align-items: stretch; flex-direction: column; }
   .filter-bar label, .filter-bar button, .filter-bar .button { width: 100%; }
   .pagination { flex-wrap: wrap; }

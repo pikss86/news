@@ -96,6 +96,9 @@ def test_signed_monotonic_control_and_damaged_files(tmp_path) -> None:
     assert control.request("start", 4) == 1
     assert control.request("stop") == 2
     assert control.read_request()["action"] == "stop"  # type: ignore[index]
+    assert control.request_download(501) == 3
+    assert control.read_request()["action"] == "download_file"  # type: ignore[index]
+    assert control.read_request()["file_id"] == 501  # type: ignore[index]
 
     document = json.loads(control.control_path.read_text())
     document["payload"]["action"] = "restart"

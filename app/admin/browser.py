@@ -7,6 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from app.collector.media import extract_file_objects
+
 
 class DataBrowser:
     """Small read-only query layer for the administration data browser."""
@@ -122,7 +124,7 @@ class DataBrowser:
         return {"rows": rows, "total": int((total or {}).get("total", 0))}
 
     async def chat(self, database_url: str, chat_id: int) -> dict[str, Any] | None:
-        return await self._row(
+        chat = await self._row(
             database_url,
             """
             SELECT c.*,
@@ -133,6 +135,23 @@ class DataBrowser:
             """,
             {"chat_id": chat_id},
         )
+        if chat is None:
+            return None
+        messages = await self._rows(
+            database_url,
+            """
+            SELECT m.chat_id, m.message_id, m.published_at, m.last_collected_at,
+                   m.edited_at, m.deleted_at, m.is_deleted, m.content_type, m.text,
+                   m.content, m.current_version
+              FROM telegram_messages m
+             WHERE m.chat_id = :chat_id
+             ORDER BY COALESCE(m.published_at, m.last_collected_at) DESC
+             LIMIT 100
+            """,
+            {"chat_id": chat_id},
+        )
+        await self._add_attachments(database_url, messages)
+        return {"chat": chat, "messages": messages}
 
     async def messages(
         self,
@@ -169,7 +188,7 @@ class DataBrowser:
             f"""
             SELECT m.chat_id, m.message_id, m.published_at, m.last_collected_at,
                    m.edited_at, m.deleted_at, m.is_deleted, m.content_type, m.text,
-                   m.current_version, c.title AS chat_title
+                   m.content, m.current_version, c.title AS chat_title
               FROM telegram_messages m
               LEFT JOIN telegram_chats c ON c.chat_id = m.chat_id
               {where}
@@ -178,6 +197,7 @@ class DataBrowser:
             """,
             parameters,
         )
+        await self._add_attachments(database_url, rows)
         return {"rows": rows, "total": int((total or {}).get("total", 0))}
 
     async def message(
@@ -206,7 +226,65 @@ class DataBrowser:
             """,
             {"chat_id": chat_id, "message_id": message_id},
         )
-        return {"message": message, "versions": versions}
+        wrapped = [message]
+        await self._add_attachments(database_url, wrapped)
+        return {
+            "message": wrapped[0],
+            "versions": versions,
+            "attachments": wrapped[0]["attachments"],
+        }
+
+    async def file(self, database_url: str, file_id: int) -> dict[str, Any] | None:
+        return await self._row(
+            database_url,
+            """
+            SELECT file_id, size, expected_size, local_path, can_be_downloaded,
+                   is_downloading_active, is_downloading_completed, downloaded_size,
+                   first_collected_at, last_updated_at, download_requested_at,
+                   download_completed_at, raw_file
+              FROM telegram_files
+             WHERE file_id = :file_id
+            """,
+            {"file_id": file_id},
+        )
+
+    async def _add_attachments(self, database_url: str, messages: list[dict[str, Any]]) -> None:
+        file_objects: dict[int, dict[str, Any]] = {}
+        message_file_ids: list[list[int]] = []
+        for message in messages:
+            objects = extract_file_objects(message.get("content"))
+            ids = [item["id"] for item in objects]
+            message_file_ids.append(ids)
+            file_objects.update({item["id"]: item for item in objects})
+        if not file_objects:
+            for message in messages:
+                message["attachments"] = []
+            return
+        parameters = {f"file_{index}": file_id for index, file_id in enumerate(file_objects)}
+        placeholders = ", ".join(f":{name}" for name in parameters)
+        rows = await self._rows(
+            database_url,
+            f"""
+            SELECT file_id, size, expected_size, local_path, can_be_downloaded,
+                   is_downloading_active, is_downloading_completed, downloaded_size,
+                   download_requested_at, download_completed_at
+              FROM telegram_files
+             WHERE file_id IN ({placeholders})
+            """,
+            parameters,
+        )
+        stored = {item["file_id"]: item for item in rows}
+        for message, ids in zip(messages, message_file_ids, strict=True):
+            attachments = []
+            for file_id in ids:
+                metadata = dict(stored.get(file_id, {}))
+                raw = file_objects[file_id]
+                metadata.setdefault("file_id", file_id)
+                metadata.setdefault("size", raw.get("size", 0))
+                metadata.setdefault("expected_size", raw.get("expected_size", 0))
+                metadata.setdefault("can_be_downloaded", True)
+                attachments.append(metadata)
+            message["attachments"] = attachments
 
     async def events(
         self,
