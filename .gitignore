@@ -13,3 +13,5 @@ build/
 .vscode/
 tdlib-data/
 postgres-data/
+service-secrets/
+service-settings/

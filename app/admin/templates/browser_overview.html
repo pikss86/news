@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Собранные данные{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>Собранные данные</h2><p>Текущее содержимое PostgreSQL. Просмотр не изменяет записи.</p></div></section>
+<section class="grid metric-grid">
+  <a class="metric" href="/browser/events"><strong>{{ stats.events or 0 }}</strong><span>Raw events</span></a>
+  <a class="metric" href="/browser/chats"><strong>{{ stats.chats or 0 }}</strong><span>Чаты</span></a>
+  <a class="metric" href="/browser/messages"><strong>{{ stats.messages or 0 }}</strong><span>Сообщения</span></a>
+  <a class="metric" href="/browser/messages"><strong>{{ stats.versions or 0 }}</strong><span>Версии</span></a>
+  <a class="metric" href="/browser/messages?deleted=yes"><strong>{{ stats.deleted or 0 }}</strong><span>Удалённые</span></a>
+  <a class="metric" href="/browser/files"><strong>{{ stats.files_ready or 0 }}/{{ stats.files or 0 }}</strong><span>Медиа скачано</span></a>
+</section>
+<p class="muted">Последнее raw-событие: {{ stats.last_event_at or 'ещё не получено' }}</p>
+
+<section class="card"><div class="section-title"><h2>Последние сообщения</h2><a href="/browser/messages">Все сообщения →</a></div>
+{% if recent_messages %}<div class="data-list">
+  {% for item in recent_messages %}<a class="data-row" href="/browser/messages/{{ item.chat_id }}/{{ item.message_id }}">
+    <span class="row-main"><strong>{{ item.chat_title or item.chat_id }}</strong><span>{{ (item.text or '[' ~ (item.content_type or 'без текста') ~ ']')|truncate(180) }}</span></span>
+    <span class="row-meta">{{ item.published_at or item.last_collected_at }} · v{{ item.current_version }}{% if item.is_deleted %} · удалено{% endif %}</span>
+  </a>{% endfor %}
+</div>{% else %}<p class="empty">Новых сообщений после запуска collector-а пока не было.</p>{% endif %}
+</section>
+
+<section class="card"><div class="section-title"><h2>Последние raw events</h2><a href="/browser/events">Все события →</a></div>
+<div class="data-list">{% for item in recent_events %}<a class="data-row compact" href="/browser/events/{{ item.id }}">
+  <span><strong>#{{ item.id }}</strong> {{ item.event_type }}</span><span class="row-meta">{{ item.received_at }}</span>
+</a>{% else %}<p class="empty">Raw events пока отсутствуют.</p>{% endfor %}</div></section>
+{% endblock %}

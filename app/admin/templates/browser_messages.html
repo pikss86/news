@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Сообщения{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>Сообщения</h2><p>Нормализованные сообщения и их текущее наблюдаемое состояние.</p></div></section>
+<form class="filter-bar" method="get">
+  <label>Текст<input name="q" value="{{ q }}" placeholder="Поиск по тексту"></label>
+  <label>Chat ID<input name="chat_id" value="{{ chat_id or '' }}" inputmode="numeric" placeholder="Любой"></label>
+  <label>Состояние<select name="deleted"><option value="" {% if not deleted %}selected{% endif %}>Все</option><option value="no" {% if deleted == 'no' %}selected{% endif %}>Доступные</option><option value="yes" {% if deleted == 'yes' %}selected{% endif %}>Удалённые</option></select></label>
+  <button type="submit">Применить</button><a class="button" href="/browser/messages">Сбросить</a>
+</form>
+<section class="card"><div class="data-list message-list">
+{% for item in rows %}<a class="data-row" href="/browser/messages/{{ item.chat_id }}/{{ item.message_id }}">
+  <span class="row-main"><strong>{{ item.chat_title or item.chat_id }}</strong><span>{{ (item.text or '[' ~ (item.content_type or 'без текста') ~ ']')|truncate(260) }}</span></span>
+  <span class="row-meta">{{ item.published_at or item.last_collected_at }} · v{{ item.current_version }}{% if item.edited_at %} · изменено{% endif %}{% if item.is_deleted %} · удалено{% endif %}</span>
+</a>{% else %}<p class="empty">Сообщения по выбранным условиям не найдены.</p>{% endfor %}
+</div></section>
+{% include "browser_pagination.html" %}
+{% endblock %}

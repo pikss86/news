@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Чаты{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>Чаты</h2><p>Источники и группы, которые увидел TDLib.</p></div></section>
+<form class="filter-bar" method="get"><label>Название или ID<input name="q" value="{{ q }}" placeholder="Поиск"></label><button type="submit">Найти</button><a class="button" href="/browser/chats">Сбросить</a></form>
+<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>Чат</th><th>Тип</th><th>Сообщения</th><th>Последнее наблюдение</th></tr></thead><tbody>
+{% for item in rows %}<tr><td><a href="/browser/chats/{{ item.chat_id }}"><strong>{{ item.title or 'Без названия' }}</strong><small>{{ item.chat_id }}</small></a></td><td>{{ item.chat_type or '—' }}</td><td><a href="/browser/messages?chat_id={{ item.chat_id }}">{{ item.message_count }}</a></td><td>{{ item.last_collected_at }}</td></tr>
+{% else %}<tr><td colspan="4" class="empty">Чаты не найдены.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% include "browser_pagination.html" %}
+{% endblock %}

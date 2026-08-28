@@ -1,63 +1,63 @@
 ## 1. Clean bootstrap и модель настроек
 
-- [ ] 1.1 Добавить минимальные ASGI/template/crypto/password-hashing зависимости и проверить их установку полной Docker build
-- [ ] 1.2 Выделить общую immutable модель всех collector-настроек с metadata раздела, secret-флага и apply class; проверить defaults, ranges и cross-field validation unit-тестами
-- [ ] 1.3 Реализовать idempotent bootstrap внутренних PostgreSQL credentials и settings encryption key в persistent secret volume; проверить clean run, повторный run, file permissions и fail-closed damaged secret
-- [ ] 1.4 Перевести bundled PostgreSQL и collector на file-based internal database secret без обязательного заполненного `.env`; проверить запуск чистого Compose stack и сохранение password после recreate
-- [ ] 1.5 Сохранить environment-only recovery loader и проверить, что persistent snapshot и environment не смешиваются внутри одной конфигурации
+- [x] 1.1 Добавить минимальные ASGI/template/crypto/password-hashing зависимости и проверить их установку полной Docker build
+- [x] 1.2 Выделить общую immutable модель всех collector-настроек с metadata раздела, secret-флага и apply class; проверить defaults, ranges и cross-field validation unit-тестами
+- [x] 1.3 Реализовать idempotent bootstrap внутренних PostgreSQL credentials и settings encryption key в persistent secret volume; проверить clean run, повторный run, file permissions и fail-closed damaged secret
+- [x] 1.4 Перевести bundled PostgreSQL и collector на file-based internal database secret без обязательного заполненного `.env`; проверить запуск чистого Compose stack и сохранение password после recreate
+- [x] 1.5 Сохранить environment-only recovery loader и проверить, что persistent snapshot и environment не смешиваются внутри одной конфигурации
 
 ## 2. Зашифрованные drafts, revisions и control state
 
-- [ ] 2.1 Реализовать authenticated encryption, atomic write/fsync/rename и file locking; проверить round-trip, wrong key, corrupted ciphertext и отсутствие plaintext secrets на диске
-- [ ] 2.2 Реализовать append-only revisions, отдельные draft/active/applied pointers и changed-field metadata; проверить монотонную нумерацию и сохранность предыдущих revisions
-- [ ] 2.3 Реализовать rollback-as-new-draft и invalidation check results после изменения draft hash; проверить, что rollback не запускает collector автоматически
-- [ ] 2.4 Реализовать signed monotonic start/stop/restart requests и atomic supervisor status без произвольных команд; проверить повтор request id и damaged control file
-- [ ] 2.5 Реализовать централизованную redaction phone, API hash, database URL/password, authentication code и 2FA; проверить logs, status, HTML и errors secret-scan тестами
+- [x] 2.1 Реализовать authenticated encryption, atomic write/fsync/rename и file locking; проверить round-trip, wrong key, corrupted ciphertext и отсутствие plaintext secrets на диске
+- [x] 2.2 Реализовать append-only revisions, отдельные draft/active/applied pointers и changed-field metadata; проверить монотонную нумерацию и сохранность предыдущих revisions
+- [x] 2.3 Реализовать rollback-as-new-draft и invalidation check results после изменения draft hash; проверить, что rollback не запускает collector автоматически
+- [x] 2.4 Реализовать signed monotonic start/stop/restart requests и atomic supervisor status без произвольных команд; проверить повтор request id и damaged control file
+- [x] 2.5 Реализовать централизованную redaction phone, API hash, database URL/password, authentication code и 2FA; проверить logs, status, HTML и errors secret-scan тестами
 
 ## 3. Amnezia VPN и web security
 
-- [ ] 3.1 Реализовать консервативный поиск активных private TUN/WireGuard/Amnezia interfaces с fake-interface fixtures; проверить один, ноль и несколько кандидатов
-- [ ] 3.2 Реализовать explicit interface/address/CIDR override validation и точный listener bind; проверить отказ wildcard, public, multicast, missing interface и CIDR mismatch
-- [ ] 3.3 Реализовать peer-address middleware до routing с игнорированием proxy headers; проверить VPN allow, non-VPN deny и spoofed X-Forwarded-For
-- [ ] 3.4 Реализовать создание/замену admin password со стойким hash и проверить отсутствие plaintext password в persistent files и responses
-- [ ] 3.5 Реализовать server-side sessions с idle/absolute expiry и HttpOnly SameSite=Strict cookie; проверить login/logout/expiry/restart invalidation и Secure flag при TLS mode
-- [ ] 3.6 Добавить one-time CSRF tokens и login rate limiting по socket peer address; проверить missing/wrong/reused token и временную блокировку неверных входов
+- [x] 3.1 Реализовать консервативный поиск активных private TUN/WireGuard/Amnezia interfaces с fake-interface fixtures; проверить один, ноль и несколько кандидатов
+- [x] 3.2 Реализовать explicit interface/address/CIDR override validation и точный listener bind; проверить отказ wildcard, public, multicast, missing interface и CIDR mismatch
+- [x] 3.3 Реализовать peer-address middleware до routing с игнорированием proxy headers; проверить VPN allow, non-VPN deny и spoofed X-Forwarded-For
+- [x] 3.4 Реализовать создание/замену admin password со стойким hash и проверить отсутствие plaintext password в persistent files и responses
+- [x] 3.5 Реализовать server-side sessions с idle/absolute expiry и HttpOnly SameSite=Strict cookie; проверить login/logout/expiry/restart invalidation и Secure flag при TLS mode
+- [x] 3.6 Добавить one-time CSRF tokens и login rate limiting по socket peer address; проверить missing/wrong/reused token и временную блокировку неверных входов
 
 ## 4. First-run UI и диагностика
 
-- [ ] 4.1 Создать отдельный admin entrypoint и server-rendered setup/login/settings/status/revisions routes, доступные до Telegram/PostgreSQL configuration; проверить first-run ASGI flow
-- [ ] 4.2 Создать responsive templates и локальный CSS без CDN для всех sections, checks и controls; проверить mobile viewport без горизонтальной прокрутки
-- [ ] 4.3 Реализовать masked secret inputs с семантикой «пусто — оставить», подтверждённым удалением optional secret и field-level validation; проверить отсутствие partial draft save
-- [ ] 4.4 Реализовать PostgreSQL connect/SELECT 1 и Alembic current/head preflight без изменения ingestion data; проверить success, unreachable DB, auth error и migration-required states
-- [ ] 4.5 Реализовать TDLib load, runtime path, writable directories и disk-space preflight; проверить component-level results и блокировку запуска при обязательной ошибке
-- [ ] 4.6 Реализовать dashboard со статусами draft/active/applied, PostgreSQL, migrations, TDLib, Telegram, storage, collector и last update; проверить безопасное отображение каждой error category
+- [x] 4.1 Создать отдельный admin entrypoint и server-rendered setup/login/settings/status/revisions routes, доступные до Telegram/PostgreSQL configuration; проверить first-run ASGI flow
+- [x] 4.2 Создать responsive templates и локальный CSS без CDN для всех sections, checks и controls; проверить mobile viewport без горизонтальной прокрутки
+- [x] 4.3 Реализовать masked secret inputs с семантикой «пусто — оставить», подтверждённым удалением optional secret и field-level validation; проверить отсутствие partial draft save
+- [x] 4.4 Реализовать PostgreSQL connect/SELECT 1 и Alembic current/head preflight без изменения ingestion data; проверить success, unreachable DB, auth error и migration-required states
+- [x] 4.5 Реализовать TDLib load, runtime path, writable directories и disk-space preflight; проверить component-level results и блокировку запуска при обязательной ошибке
+- [x] 4.6 Реализовать dashboard со статусами draft/active/applied, PostgreSQL, migrations, TDLib, Telegram, storage, collector и last update; проверить безопасное отображение каждой error category
 
 ## 5. Telegram authorization через браузер
 
-- [ ] 5.1 Отделить TDLib authorization state machine от terminal input через typed challenge/response interface и сохранить terminal adapter; подтвердить существующий interactive flow unit-тестами
-- [ ] 5.2 Реализовать одноразовый authorization broker с correlation id, timeout и current-state validation; проверить stale/wrong/duplicate response rejection
-- [ ] 5.3 Добавить защищённые формы для authentication code, 2FA, email/email code, registration data и other-device confirmation; проверить каждый state с fake TDLib client
-- [ ] 5.4 Проверить, что codes/passwords не попадают в settings revisions, status, cookies, HTML responses и logs после обработки
-- [ ] 5.5 Связать Telegram ready result с точным draft hash и persistent TDLib state; проверить invalidation после смены credentials и повторное использование авторизованной session после restart
+- [x] 5.1 Отделить TDLib authorization state machine от terminal input через typed challenge/response interface и сохранить terminal adapter; подтвердить существующий interactive flow unit-тестами
+- [x] 5.2 Реализовать одноразовый authorization broker с correlation id, timeout и current-state validation; проверить stale/wrong/duplicate response rejection
+- [x] 5.3 Добавить защищённые формы для authentication code, 2FA, email/email code, registration data и other-device confirmation; проверить каждый state с fake TDLib client
+- [x] 5.4 Проверить, что codes/passwords не попадают в settings revisions, status, cookies, HTML responses и logs после обработки
+- [x] 5.5 Связать Telegram ready result с точным draft hash и persistent TDLib state; проверить invalidation после смены credentials и повторное использование авторизованной session после restart
 
 ## 6. Supervisor и явное управление сбором
 
-- [ ] 6.1 Рефакторизовать создание collector для готового Settings snapshot и сохранить legacy environment entrypoint; подтвердить существующими unit и PostgreSQL integration tests
-- [ ] 6.2 Реализовать supervisor с desired states unconfigured/stopped/running и ровно одним ingestion worker; проверить lifecycle test doubles
-- [ ] 6.3 Реализовать кнопку «Сохранить черновик» без запуска и «Проверить подключения» с привязкой результатов к draft hash; проверить, что непроверенный draft не влияет на running collector
-- [ ] 6.4 Реализовать «Сохранить и запустить сбор» только после обязательных checks и Telegram ready; проверить atomic active promotion и переход starting → running/error
-- [ ] 6.5 Реализовать graceful stop/restart с закрытием TDLib и database engine до следующего start; проверить порядок ресурсов и idempotent повтор команды
-- [ ] 6.6 Реализовать dynamic apply для log/media fields и managed restart для connection/TDLib/retry fields; проверить applied revision и fallback на restart при dynamic failure
-- [ ] 6.7 Выполнять Alembic upgrade после active database resolution и до ingestion; проверить fresh/current/outdated/error database без потери raw events/messages/versions
-- [ ] 6.8 Обновлять last successful update timestamp из collector и проверить его отображение и сохранение safe status после container restart
+- [x] 6.1 Рефакторизовать создание collector для готового Settings snapshot и сохранить legacy environment entrypoint; подтвердить существующими unit и PostgreSQL integration tests
+- [x] 6.2 Реализовать supervisor с desired states unconfigured/stopped/running и ровно одним ingestion worker; проверить lifecycle test doubles
+- [x] 6.3 Реализовать кнопку «Сохранить черновик» без запуска и «Проверить подключения» с привязкой результатов к draft hash; проверить, что непроверенный draft не влияет на running collector
+- [x] 6.4 Реализовать «Сохранить и запустить сбор» только после обязательных checks и Telegram ready; проверить atomic active promotion и переход starting → running/error
+- [x] 6.5 Реализовать graceful stop/restart с закрытием TDLib и database engine до следующего start; проверить порядок ресурсов и idempotent повтор команды
+- [x] 6.6 Реализовать dynamic apply для log/media fields и managed restart для connection/TDLib/retry fields; проверить applied revision и fallback на restart при dynamic failure
+- [x] 6.7 Выполнять Alembic upgrade после active database resolution и до ingestion; проверить fresh/current/outdated/error database без потери raw events/messages/versions
+- [x] 6.8 Обновлять last successful update timestamp из collector и проверить его отображение и сохранение safe status после container restart
 
 ## 7. Docker, документация и итоговая проверка
 
-- [ ] 7.1 Обновить Compose стандартным bootstrap/admin/supervisor flow, named secret/settings volumes, host network admin, non-root user, dropped capabilities, read-only root filesystem и отсутствующим Docker socket; проверить `docker compose config`
-- [ ] 7.2 Добавить healthchecks и startup ordering так, чтобы clean `docker compose up -d` поднимал панель и БД, но не ingestion; проверить состояние контейнеров без `.env`
-- [ ] 7.3 Обновить `.env.example` только optional override/recovery placeholders и проверить, что `.env`, bootstrap secrets и settings data игнорируются Git и не входят в image
-- [ ] 7.4 Обновить README сценарием «одна команда → Amnezia URL → пароль → настройки → checks → Telegram code/2FA → start», recovery, backup и threat model
-- [ ] 7.5 Обновить CONCEPT.md описанием setup/control plane, диагностик и явного запуска без привязки к конкретным технологиям
-- [ ] 7.6 Добавить end-to-end test clean bootstrap → setup → draft → checks → web authorization → start → last update → stop → restart → rollback без реальных credentials
-- [ ] 7.7 Запустить `openspec validate --all --strict`, format, lint, полный pytest, PostgreSQL integration, Alembic check, Compose build/config и исправить найденные ошибки
+- [x] 7.1 Обновить Compose стандартным bootstrap/admin/supervisor flow, named secret/settings volumes, host network admin, non-root user, dropped capabilities, read-only root filesystem и отсутствующим Docker socket; проверить `docker compose config`
+- [x] 7.2 Добавить healthchecks и startup ordering так, чтобы clean `docker compose up -d` поднимал панель и БД, но не ingestion; проверить состояние контейнеров без `.env`
+- [x] 7.3 Обновить `.env.example` только optional override/recovery placeholders и проверить, что `.env`, bootstrap secrets и settings data игнорируются Git и не входят в image
+- [x] 7.4 Обновить README сценарием «одна команда → Amnezia URL → пароль → настройки → checks → Telegram code/2FA → start», recovery, backup и threat model
+- [x] 7.5 Обновить CONCEPT.md описанием setup/control plane, диагностик и явного запуска без привязки к конкретным технологиям
+- [x] 7.6 Добавить end-to-end test clean bootstrap → setup → draft → checks → web authorization → start → last update → stop → restart → rollback без реальных credentials
+- [x] 7.7 Запустить `openspec validate --all --strict`, format, lint, полный pytest, PostgreSQL integration, Alembic check, Compose build/config и исправить найденные ошибки
 - [ ] 7.8 На Linux-host с реальной Amnezia проверить bind только на VPN IP и deny вне CIDR; с реальными Telegram credentials проверить code/2FA, ready, получение update и явно отделить эти результаты от автоматических тестов

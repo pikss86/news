@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Сообщение {{ message.message_id }}{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><p class="crumb"><a href="/browser/messages?chat_id={{ message.chat_id }}">{{ message.chat_title or message.chat_id }}</a> / {{ message.message_id }}</p><h2>Сообщение{% if message.is_deleted %} <span class="danger-badge">удалено</span>{% endif %}</h2><p>{{ message.published_at or message.first_collected_at }} · {{ message.content_type or 'тип неизвестен' }}</p></div><a class="button" href="/browser/events/{{ message.current_event_id }}">Исходный event</a></section>
+<section class="card message-body">{% if message.text %}<p>{{ message.text }}</p>{% else %}<p class="empty">Текст отсутствует; смотрите content и media ниже.</p>{% endif %}</section>
+<section class="card detail-grid"><div><span>Chat ID</span><strong>{{ message.chat_id }}</strong></div><div><span>Message ID</span><strong>{{ message.message_id }}</strong></div><div><span>Версия</span><strong>{{ message.current_version }}</strong></div><div><span>Собрано</span><strong>{{ message.last_collected_at }}</strong></div><div><span>Изменено</span><strong>{{ message.edited_at or '—' }}</strong></div><div><span>Удалено</span><strong>{{ message.deleted_at or '—' }}</strong></div></section>
+<section class="card"><h2>История версий</h2><div class="versions">{% for version in versions %}<details {% if loop.first %}open{% endif %}><summary>v{{ version.version_number }} · {{ version.change_type }} · {{ version.observed_at }} · event #{{ version.source_event_id }}</summary><pre class="json-view">{{ version.snapshot|prettyjson }}</pre></details>{% else %}<p class="empty">Версий нет.</p>{% endfor %}</div></section>
+<section class="card"><h2>Content</h2><pre class="json-view">{{ message.content|prettyjson }}</pre></section>
+<section class="card"><h2>Provenance и metadata</h2><pre class="json-view">{{ {'sender': message.sender, 'forward_info': message.forward_info, 'reply_to': message.reply_to, 'media': message.media, 'interaction_info': message.interaction_info}|prettyjson }}</pre></section>
+{% endblock %}

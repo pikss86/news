@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Первичная настройка{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h2>Создайте пароль администратора</h2>
+  <p>Панель доступна только через Amnezia VPN. Используйте отдельный пароль длиной не менее 12 символов.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/setup">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Пароль<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+    <label>Повторите пароль<input type="password" name="confirmation" required minlength="12" autocomplete="new-password"></label>
+    <button type="submit">Создать пароль</button>
+  </form>
+</section>
+{% endblock %}

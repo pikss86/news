@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Чат {{ chat.title or chat.chat_id }}{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><p class="crumb"><a href="/browser/chats">Чаты</a> / {{ chat.chat_id }}</p><h2>{{ chat.title or 'Чат без названия' }}</h2><p>{{ chat.chat_type or 'Тип неизвестен' }} · сообщений: {{ chat.message_count }}</p></div><a class="button primary" href="/browser/messages?chat_id={{ chat.chat_id }}">Показать сообщения</a></section>
+<section class="card detail-grid"><div><span>ID</span><strong>{{ chat.chat_id }}</strong></div><div><span>Первое наблюдение</span><strong>{{ chat.first_collected_at }}</strong></div><div><span>Последнее наблюдение</span><strong>{{ chat.last_collected_at }}</strong></div></section>
+<section class="card"><h2>Текущее представление TDLib</h2><pre class="json-view">{{ chat.raw_chat|prettyjson }}</pre></section>
+<section class="card"><h2>Последний update</h2><pre class="json-view">{{ chat.last_update|prettyjson }}</pre></section>
+{% endblock %}

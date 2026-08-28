@@ -1,0 +1,684 @@
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
+
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
+
+from app.admin.browser import DataBrowser
+from app.admin.checks import PreflightRunner
+from app.admin.network import AdminNetwork, VPNAccessMiddleware
+from app.admin.security import AdminPasswordStore, LoginRateLimiter, SessionManager
+from app.admin.telegram import TelegramAuthorizationSession
+from app.config import Settings
+from app.settings.bootstrap import bundled_database_url
+from app.settings.control import ControlChannel
+from app.settings.redaction import redact
+from app.settings.store import SettingsStore, SettingsStoreError
+
+logger = logging.getLogger(__name__)
+COOKIE_NAME = "news_admin_session"
+NOTICES = {
+    "draft-saved": "Черновик сохранён. Секретные поля защищены и поэтому не показываются повторно.",
+    "checks-complete": "Проверки завершены. Результаты показаны выше.",
+    "telegram-started": "Авторизация Telegram запущена.",
+    "telegram-response-sent": "Ответ отправлен Telegram.",
+    "start-requested": "Команда запуска отправлена collector-у.",
+    "stop-requested": "Команда остановки отправлена collector-у.",
+    "restart-requested": "Команда перезапуска отправлена collector-у.",
+    "rollback-created": "Из выбранной ревизии создан новый черновик; он не запущен.",
+}
+
+
+def _default_values(secrets_directory: Path) -> dict[str, Any]:
+    return {
+        "database_url": bundled_database_url(secrets_directory),
+        "telegram_api_id": "",
+        "telegram_api_hash": "",
+        "telegram_phone_number": "",
+        "telegram_database_encryption_key": "",
+        "tdlib_data_dir": "/var/lib/tdlib",
+        "tdlib_library_path": "/usr/local/lib/libtdjson.so",
+        "tdlib_log_verbosity": 2,
+        "telegram_download_media": False,
+        "telegram_media_download_priority": 16,
+        "log_level": "INFO",
+        "database_retry_initial_seconds": 1.0,
+        "database_retry_max_seconds": 30.0,
+    }
+
+
+def _display_values(settings: Settings | None, secrets_directory: Path) -> dict[str, Any]:
+    values = settings.plain_dict() if settings else _default_values(secrets_directory)
+    for name in Settings.secret_field_names():
+        values[name] = ""
+    return values
+
+
+def _field_errors(error: ValidationError) -> dict[str, str]:
+    return {
+        str(item["loc"][0]): item["msg"].removeprefix("Value error, ")
+        for item in error.errors()
+        if item["loc"]
+    }
+
+
+def _settings_from_form(form: Any, current: Settings | None, secrets_directory: Path) -> Settings:
+    values = current.plain_dict() if current else _default_values(secrets_directory)
+    for name in Settings.model_fields:
+        metadata = Settings.FIELD_METADATA[name]
+        if name == "telegram_download_media":
+            values[name] = form.get(name) == "on"
+            continue
+        submitted = form.get(name)
+        if metadata["secret"] and (submitted is None or not str(submitted).strip()):
+            if name == "telegram_database_encryption_key" and form.get(f"delete_{name}") == "on":
+                values[name] = ""
+            continue
+        if submitted is not None:
+            values[name] = str(submitted).strip()
+    return Settings.model_validate(values)
+
+
+def create_admin_app(
+    *,
+    store: SettingsStore,
+    control: ControlChannel,
+    password_store: AdminPasswordStore,
+    network: AdminNetwork,
+    secrets_directory: Path,
+    templates_directory: Path | None = None,
+    static_directory: Path | None = None,
+    cookie_secure: bool = False,
+    preflight: PreflightRunner | None = None,
+    telegram: TelegramAuthorizationSession | None = None,
+    data_browser: DataBrowser | None = None,
+) -> FastAPI:
+    sessions = SessionManager()
+    limiter = LoginRateLimiter()
+    runner = preflight or PreflightRunner()
+    telegram_session = telegram or TelegramAuthorizationSession()
+    browser = data_browser or DataBrowser()
+    base = Path(__file__).parent
+    templates = Jinja2Templates(directory=str(templates_directory or base / "templates"))
+    templates.env.filters["prettyjson"] = lambda value: json.dumps(
+        value, ensure_ascii=False, indent=2, default=str
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        await telegram_session.stop()
+        await browser.close()
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.add_middleware(VPNAccessMiddleware, allowed_networks=network.allowed_networks)
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(static_directory or base / "static")),
+        name="static",
+    )
+    app.state.sessions = sessions
+    app.state.telegram = telegram_session
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
+        return response
+
+    def peer(request: Request) -> str:
+        return str(request.scope.get("vpn_peer", "unknown"))
+
+    def session_token(request: Request) -> str | None:
+        return request.cookies.get(COOKIE_NAME)
+
+    def require_session(request: Request) -> str:
+        token = session_token(request)
+        if not sessions.validate(token):
+            raise HTTPException(
+                status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"}
+            )
+        assert token is not None
+        return token
+
+    async def valid_csrf(request: Request, principal: str, *, anonymous: bool = False) -> Any:
+        form = await request.form()
+        csrf_token = str(form.get("csrf_token", ""))
+        if not sessions.consume_csrf(principal, csrf_token, anonymous=anonymous):
+            raise HTTPException(status_code=403, detail="Invalid CSRF token")
+        return form
+
+    def render_dashboard(
+        request: Request,
+        session: str,
+        *,
+        errors: dict[str, str] | None = None,
+        notice: str | None = None,
+    ) -> HTMLResponse:
+        manifest = store.manifest()
+        draft = store.load_draft()
+        collector_state = redact(control.read_status())
+        telegram_state = redact(telegram_session.state())
+        if collector_state.get("state") == "running" and not collector_state.get("error"):
+            telegram_state["ready"] = True
+            telegram_state["state"] = "authorizationStateReady"
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "csrf_token": sessions.issue_csrf(session),
+                "settings": _display_values(draft, secrets_directory),
+                "configured_secrets": {
+                    name: bool(draft and draft.plain_dict().get(name))
+                    for name in Settings.secret_field_names()
+                },
+                "field_metadata": Settings.FIELD_METADATA,
+                "errors": errors or {},
+                "notice": notice
+                or NOTICES.get(
+                    request.query_params.get("notice", ""), request.query_params.get("notice")
+                ),
+                "manifest": manifest,
+                "checks": redact(manifest.get("checks")),
+                "collector": collector_state,
+                "telegram": telegram_state,
+                "revisions": store.list_revisions(),
+            },
+        )
+
+    def render_telegram(
+        request: Request,
+        session: str,
+        *,
+        status_code: int = 200,
+        error: str | None = None,
+    ) -> HTMLResponse:
+        telegram_state = redact(telegram_session.state())
+        collector_state = redact(control.read_status())
+        if collector_state.get("state") == "running" and not collector_state.get("error"):
+            telegram_state["ready"] = True
+            telegram_state["state"] = "authorizationStateReady"
+        if error:
+            telegram_state["error"] = {"message": error}
+        challenge = telegram_state.get("challenge")
+        return templates.TemplateResponse(
+            request,
+            "telegram.html",
+            {
+                "csrf_token": sessions.issue_csrf(session),
+                "telegram": telegram_state,
+                "challenge": challenge,
+                "refresh": bool(
+                    telegram_state.get("running")
+                    and not telegram_state.get("ready")
+                    and challenge is None
+                ),
+            },
+            status_code=status_code,
+        )
+
+    def browser_database_url() -> str | None:
+        manifest = store.manifest()
+        active_revision = manifest.get("active_revision")
+        settings = (
+            store.load_revision(active_revision)
+            if active_revision is not None
+            else store.load_draft()
+        )
+        return settings.database_url if settings else None
+
+    async def browser_query(
+        operation: Callable[[str], Awaitable[Any]],
+    ) -> tuple[Any | None, str | None]:
+        database_url = browser_database_url()
+        if database_url is None:
+            return None, "Сначала сохраните настройки подключения к PostgreSQL."
+        try:
+            return await operation(database_url), None
+        except Exception as error:
+            logger.exception(
+                "data browser query failed", extra={"error_type": type(error).__name__}
+            )
+            return (
+                None,
+                "Не удалось прочитать PostgreSQL. Проверьте подключение на странице настроек.",
+            )
+
+    def browser_error(request: Request, message: str) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "browser_error.html",
+            {"message": message},
+            status_code=503,
+        )
+
+    def pagination(
+        path: str, page: int, total: int, per_page: int, parameters: dict[str, Any]
+    ) -> dict[str, Any]:
+        def link(target: int) -> str:
+            values = {key: value for key, value in parameters.items() if value not in (None, "")}
+            values["page"] = target
+            return f"{path}?{urlencode(values)}"
+
+        return {
+            "page": page,
+            "total": total,
+            "per_page": per_page,
+            "prev_url": link(page - 1) if page > 1 else None,
+            "next_url": link(page + 1) if page * per_page < total else None,
+        }
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> Any:
+        if not password_store.configured:
+            return RedirectResponse("/setup", status_code=303)
+        token = session_token(request)
+        if not sessions.validate(token):
+            return RedirectResponse("/login", status_code=303)
+        assert token is not None
+        return render_dashboard(request, token)
+
+    @app.get("/browser", response_class=HTMLResponse)
+    async def browser_overview(request: Request) -> Any:
+        require_session(request)
+        data, error = await browser_query(browser.overview)
+        if error:
+            return browser_error(request, error)
+        return templates.TemplateResponse(request, "browser_overview.html", data)
+
+    @app.get("/browser/chats", response_class=HTMLResponse)
+    async def browser_chats(request: Request, page: int = 1, q: str = "") -> Any:
+        require_session(request)
+        page = max(1, page)
+        q = q.strip()[:200]
+        per_page = 50
+        data, error = await browser_query(
+            lambda url: browser.chats(url, page=page, per_page=per_page, query=q)
+        )
+        if error:
+            return browser_error(request, error)
+        assert data is not None
+        context = {
+            **data,
+            "q": q,
+            "pagination": pagination("/browser/chats", page, data["total"], per_page, {"q": q}),
+        }
+        return templates.TemplateResponse(request, "browser_chats.html", context)
+
+    @app.get("/browser/chats/{chat_id}", response_class=HTMLResponse)
+    async def browser_chat(request: Request, chat_id: int) -> Any:
+        require_session(request)
+        data, error = await browser_query(lambda url: browser.chat(url, chat_id))
+        if error:
+            return browser_error(request, error)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return templates.TemplateResponse(request, "browser_chat.html", {"chat": data})
+
+    @app.get("/browser/messages", response_class=HTMLResponse)
+    async def browser_messages(
+        request: Request,
+        page: int = 1,
+        chat_id: int | None = None,
+        q: str = "",
+        deleted: str = "",
+    ) -> Any:
+        require_session(request)
+        page = max(1, page)
+        q = q.strip()[:200]
+        deleted_value = {"yes": True, "no": False}.get(deleted)
+        per_page = 50
+        data, error = await browser_query(
+            lambda url: browser.messages(
+                url,
+                page=page,
+                per_page=per_page,
+                chat_id=chat_id,
+                query=q,
+                deleted=deleted_value,
+            )
+        )
+        if error:
+            return browser_error(request, error)
+        assert data is not None
+        context = {
+            **data,
+            "q": q,
+            "chat_id": chat_id,
+            "deleted": deleted,
+            "pagination": pagination(
+                "/browser/messages",
+                page,
+                data["total"],
+                per_page,
+                {"q": q, "chat_id": chat_id, "deleted": deleted},
+            ),
+        }
+        return templates.TemplateResponse(request, "browser_messages.html", context)
+
+    @app.get("/browser/messages/{chat_id}/{message_id}", response_class=HTMLResponse)
+    async def browser_message(request: Request, chat_id: int, message_id: int) -> Any:
+        require_session(request)
+        data, error = await browser_query(lambda url: browser.message(url, chat_id, message_id))
+        if error:
+            return browser_error(request, error)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        return templates.TemplateResponse(request, "browser_message.html", data)
+
+    @app.get("/browser/events", response_class=HTMLResponse)
+    async def browser_events(
+        request: Request,
+        page: int = 1,
+        event_type: str = "",
+        chat_id: int | None = None,
+        message_id: int | None = None,
+    ) -> Any:
+        require_session(request)
+        page = max(1, page)
+        event_type = event_type.strip()[:128]
+        per_page = 50
+        data, error = await browser_query(
+            lambda url: browser.events(
+                url,
+                page=page,
+                per_page=per_page,
+                event_type=event_type,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+        )
+        if error:
+            return browser_error(request, error)
+        assert data is not None
+        context = {
+            **data,
+            "selected_event_type": event_type,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "pagination": pagination(
+                "/browser/events",
+                page,
+                data["total"],
+                per_page,
+                {"event_type": event_type, "chat_id": chat_id, "message_id": message_id},
+            ),
+        }
+        return templates.TemplateResponse(request, "browser_events.html", context)
+
+    @app.get("/browser/events/{event_id}", response_class=HTMLResponse)
+    async def browser_event(request: Request, event_id: int) -> Any:
+        require_session(request)
+        data, error = await browser_query(lambda url: browser.event(url, event_id))
+        if error:
+            return browser_error(request, error)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        return templates.TemplateResponse(request, "browser_event.html", {"event": data})
+
+    @app.get("/browser/files", response_class=HTMLResponse)
+    async def browser_files(request: Request, page: int = 1, state: str = "") -> Any:
+        require_session(request)
+        page = max(1, page)
+        state = state if state in {"", "ready", "pending", "available"} else ""
+        per_page = 50
+        data, error = await browser_query(
+            lambda url: browser.files(url, page=page, per_page=per_page, state=state)
+        )
+        if error:
+            return browser_error(request, error)
+        assert data is not None
+        context = {
+            **data,
+            "state": state,
+            "pagination": pagination(
+                "/browser/files", page, data["total"], per_page, {"state": state}
+            ),
+        }
+        return templates.TemplateResponse(request, "browser_files.html", context)
+
+    @app.get("/setup", response_class=HTMLResponse)
+    async def setup_page(request: Request) -> Any:
+        if password_store.configured:
+            return RedirectResponse("/login", status_code=303)
+        current_peer = peer(request)
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"csrf_token": sessions.issue_csrf(current_peer, anonymous=True), "error": None},
+        )
+
+    @app.post("/setup", response_class=HTMLResponse)
+    async def setup_password(request: Request) -> Any:
+        if password_store.configured:
+            return RedirectResponse("/login", status_code=303)
+        current_peer = peer(request)
+        form = await valid_csrf(request, current_peer, anonymous=True)
+        password = str(form.get("password", ""))
+        confirmation = str(form.get("confirmation", ""))
+        error: str | None = None
+        try:
+            if password != confirmation:
+                raise ValueError("Passwords do not match")
+            password_store.set_password(password)
+        except ValueError as problem:
+            error = str(problem)
+        if error:
+            return templates.TemplateResponse(
+                request,
+                "setup.html",
+                {
+                    "csrf_token": sessions.issue_csrf(current_peer, anonymous=True),
+                    "error": error,
+                },
+                status_code=422,
+            )
+        token = sessions.create()
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="strict",
+            secure=cookie_secure,
+            max_age=sessions.absolute_seconds,
+        )
+        return response
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request) -> Any:
+        current_peer = peer(request)
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"csrf_token": sessions.issue_csrf(current_peer, anonymous=True), "error": None},
+        )
+
+    @app.post("/login", response_class=HTMLResponse)
+    async def login(request: Request) -> Any:
+        current_peer = peer(request)
+        form = await valid_csrf(request, current_peer, anonymous=True)
+        if not limiter.allowed(current_peer):
+            error = "Too many failed attempts. Try again later."
+        elif not password_store.verify(str(form.get("password", ""))):
+            limiter.fail(current_peer)
+            error = "Invalid password"
+        else:
+            limiter.success(current_peer)
+            token = sessions.create()
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(
+                COOKIE_NAME,
+                token,
+                httponly=True,
+                samesite="strict",
+                secure=cookie_secure,
+                max_age=sessions.absolute_seconds,
+            )
+            return response
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"csrf_token": sessions.issue_csrf(current_peer, anonymous=True), "error": error},
+            status_code=429 if not limiter.allowed(current_peer) else 401,
+        )
+
+    @app.post("/logout")
+    async def logout(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        sessions.destroy(token)
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(COOKIE_NAME)
+        return response
+
+    @app.post("/password", response_class=HTMLResponse)
+    async def change_password(request: Request) -> Any:
+        token = require_session(request)
+        form = await valid_csrf(request, token)
+        current = str(form.get("current_password", ""))
+        new_password = str(form.get("new_password", ""))
+        confirmation = str(form.get("confirmation", ""))
+        if not password_store.verify(current):
+            return render_dashboard(request, token, notice="Current password is invalid")
+        if new_password != confirmation:
+            return render_dashboard(request, token, notice="New passwords do not match")
+        try:
+            password_store.set_password(new_password)
+        except ValueError as error:
+            return render_dashboard(request, token, notice=str(error))
+        sessions.invalidate_all()
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(COOKIE_NAME)
+        return response
+
+    @app.post("/settings", response_class=HTMLResponse)
+    async def save_settings(request: Request) -> Any:
+        token = require_session(request)
+        form = await valid_csrf(request, token)
+        current = store.load_draft()
+        try:
+            settings = _settings_from_form(form, current, secrets_directory)
+            store.save_draft(settings)
+        except ValidationError as error:
+            return render_dashboard(request, token, errors=_field_errors(error))
+        await telegram_session.stop()
+        return RedirectResponse("/?notice=draft-saved", status_code=303)
+
+    @app.post("/checks")
+    async def run_checks(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        manifest = store.manifest()
+        revision = manifest.get("draft_revision")
+        settings = store.load_draft()
+        if revision is None or settings is None:
+            raise HTTPException(status_code=409, detail="Save a valid draft first")
+        collector_status = control.read_status()
+        telegram_ready = (
+            telegram_session.ready
+            and telegram_session.draft_hash == SettingsStore.settings_hash(settings)
+        ) or (
+            collector_status.get("state") == "running"
+            and collector_status.get("applied_revision") == revision
+            and not collector_status.get("error")
+        )
+        results = await runner.run(settings, telegram_ready=telegram_ready)
+        store.save_checks(revision, results)
+        return RedirectResponse("/?notice=checks-complete", status_code=303)
+
+    @app.post("/telegram/start")
+    async def start_telegram(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        settings = store.load_draft()
+        if settings is None:
+            raise HTTPException(status_code=409, detail="Save a valid draft first")
+        if control.read_status().get("state") in {"starting", "running", "stopping"}:
+            raise HTTPException(status_code=409, detail="Stop the collector before authorization")
+        await telegram_session.start(settings, SettingsStore.settings_hash(settings))
+        return RedirectResponse("/telegram", status_code=303)
+
+    @app.get("/telegram", response_class=HTMLResponse)
+    async def telegram_page(request: Request) -> Any:
+        token = require_session(request)
+        return render_telegram(request, token)
+
+    @app.post("/telegram/respond")
+    async def respond_telegram(request: Request) -> Any:
+        token = require_session(request)
+        form = await valid_csrf(request, token)
+        correlation_id = str(form.get("correlation_id", ""))
+        values = {
+            name: str(form.get(name, ""))
+            for name in ("code", "password", "email", "first_name", "last_name")
+        }
+        try:
+            telegram_session.respond(correlation_id, values)
+        except ValueError:
+            return render_telegram(
+                request,
+                token,
+                status_code=409,
+                error="Форма устарела. Дождитесь нового поля ввода и повторите попытку.",
+            )
+        return RedirectResponse("/telegram", status_code=303)
+
+    @app.post("/control/start")
+    async def start_collector(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        try:
+            revision = store.activate_draft()
+        except SettingsStoreError as error:
+            return render_dashboard(request, token, notice=str(error))
+        control.request("start", revision)
+        return RedirectResponse("/?notice=start-requested", status_code=303)
+
+    @app.post("/control/stop")
+    async def stop_collector(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        control.request("stop")
+        return RedirectResponse("/?notice=stop-requested", status_code=303)
+
+    @app.post("/control/restart")
+    async def restart_collector(request: Request) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        revision = store.manifest().get("active_revision")
+        control.request("restart", revision)
+        return RedirectResponse("/?notice=restart-requested", status_code=303)
+
+    @app.post("/revisions/{revision}/rollback")
+    async def rollback(request: Request, revision: int) -> Any:
+        token = require_session(request)
+        await valid_csrf(request, token)
+        try:
+            store.rollback_to_draft(revision)
+        except SettingsStoreError as error:
+            raise HTTPException(status_code=404, detail="Revision not found") from error
+        await telegram_session.stop()
+        return RedirectResponse("/?notice=rollback-created", status_code=303)
+
+    return app

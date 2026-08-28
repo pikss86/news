@@ -41,67 +41,113 @@ Raw event и изменение нормализованной проекции 
 
 ## Требования и Telegram credentials
 
-Для Docker-варианта нужны только Docker Engine и Docker Compose. Создайте Telegram application на
-[my.telegram.org/apps](https://my.telegram.org/apps), затем сохраните выданные `api_id` и
-`api_hash`. Используйте номер аккаунта, который уже подписан на нужные каналы. Никогда не
-коммитьте заполненный `.env`, коды входа, 2FA-пароль или ключ TDLib database.
+Нужны Linux-host, Docker Engine, Docker Compose и действующее подключение Amnezia VPN на этом
+host. Панель намеренно не слушает публичный адрес, loopback или обычный LAN-интерфейс. При запуске
+она выбирает ровно один активный private-интерфейс с консервативным Amnezia/WireGuard/TUN-именем;
+при отсутствии или неоднозначности кандидатов завершает работу с ошибкой.
 
-```bash
-cp .env.example .env
-```
+Создайте Telegram application на [my.telegram.org/apps](https://my.telegram.org/apps) и получите
+`api_id` и `api_hash`. Используйте номер аккаунта, уже подписанного на нужные каналы. Эти значения,
+номер телефона, код входа и 2FA-пароль вводятся в браузере и не должны коммититься.
 
-В `.env` обязательно замените:
-
-- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE_NUMBER`;
-- `TELEGRAM_DATABASE_ENCRYPTION_KEY` — стабильная случайная строка;
-- `POSTGRES_PASSWORD` и пароль внутри `DATABASE_URL` — они должны совпадать.
-
-Скачивание media по умолчанию выключено. Чтобы включить его, установите:
-
-```dotenv
-TELEGRAM_DOWNLOAD_MEDIA=true
-TELEGRAM_MEDIA_DOWNLOAD_PRIORITY=16
-```
-
-Приоритет может быть от 1 до 32: большее значение означает более раннюю обработку. Collector
-находит все файловые объекты внутри нового или отредактированного сообщения, включая доступные
-варианты изображений и thumbnails. Ограничений по размеру и типу файла в этой версии нет, поэтому
-при включении контролируйте свободное место в `tdlib_data`.
-
-Если пароль содержит URL-special символы, percent-encode его в `DATABASE_URL`.
+Обычный first run не требует `.env`. Файл `.env.example` содержит только необязательные deployment
+overrides и аварийный environment-only режим. Не копируйте его без необходимости.
 
 ## Сборка и первый запуск
 
-Образ собирает `libtdjson.so` непосредственно из официального репозитория TDLib. По умолчанию
-закреплён конкретный commit, указанный в `Dockerfile` и `docker-compose.yml`; его можно осознанно
-переопределить через `TDLIB_GIT_REF` в `.env`. Первая сборка TDLib занимает заметное время.
+Образ собирает официальный JSON-интерфейс TDLib из закреплённого commit. Первая сборка может
+занять заметное время.
 
 ```bash
-docker compose build
-docker compose up -d postgres
-docker compose run --rm collector
+docker compose up -d --build
+docker compose ps
 ```
 
-Alembic автоматически выполняет `upgrade head` перед каждым запуском collector. При первом входе
-TDLib запросит код в интерактивном терминале, а для защищённого аккаунта — 2FA password. Значения
-не записываются приложением. После сообщения `TDLib connected` collector уже работает; дайте ему
-получить первые updates, остановите интерактивный процесс `Ctrl+C` и запустите постоянный сервис:
+При первом запуске bootstrap один раз создаёт внутренний пароль PostgreSQL, ключ шифрования
+настроек и ключ подписания управляющих команд. Они сохраняются в отдельном volume с правами `0600`.
+Collector после чистого запуска находится в состоянии `stopped`: Telegram и ingestion не
+запускаются до явного действия администратора.
+
+Узнайте VPN-адрес host, например:
 
 ```bash
-docker compose up -d
-docker compose logs -f collector
+ip -brief address | grep -Ei 'amn|amnezia|awg|wg|tun'
 ```
 
-Named volume `tdlib_data` смонтирован в `/var/lib/tdlib` и переживает пересоздание контейнера.
-PostgreSQL использует отдельный `postgres_data`. Обычные `docker compose stop/down` volumes не
-удаляют. Команда `docker compose down -v` **удалит обе базы и авторизацию**, поэтому применять её
-следует только при намеренном полном сбросе.
+Откройте с телефона, подключённого к той же Amnezia VPN, адрес вида
+`http://<VPN-IP-СЕРВЕРА>:8080`. Дальнейший сценарий полностью браузерный:
 
-Остановка без удаления данных:
+1. Создайте пароль администратора длиной не менее 12 символов.
+2. Введите `api_id`, `api_hash`, телефон и остальные настройки. Встроенный Database URL уже
+   заполнен внутренними credentials.
+3. Нажмите «Сохранить черновик». Сохранение не запускает сбор.
+4. Нажмите «Войти в Telegram», дождитесь кода в официальном приложении и введите его на отдельной
+   странице. Поле облачного пароля или дополнительные шаги появятся только если Telegram их
+   действительно запросит.
+5. Нажмите «Проверить подключения». Панель отдельно покажет PostgreSQL, состояние миграций,
+   загрузку TDLib, Telegram session и доступность storage.
+6. Только после зелёных обязательных проверок нажмите «Сохранить и запустить сбор».
+
+Страница статуса показывает draft/active/applied revision, состояние collector и время последнего
+успешно сохранённого update. Там же доступны stop, restart, смена admin password и rollback старой
+ревизии в новый черновик. Rollback ничего не запускает автоматически.
+
+Кнопка «Открыть собранные данные» ведёт в read-only браузер PostgreSQL. В нём доступны общий
+счётчик, чаты, поиск и фильтрация сообщений, история каждой версии, удалённые сообщения,
+оригинальные TDLib JSON events и состояние media-файлов. Списки выводятся постранично. Браузер
+защищён той же VPN-границей и admin-сессией и не содержит операций изменения или удаления данных.
+
+Скачивание media включается флагом на странице. Приоритет 1–32 задаёт порядок запросов; фильтров
+размера и типа пока нет, поэтому следите за свободным местом.
+
+Логи и остановка:
 
 ```bash
+docker compose logs -f admin collector postgres
 docker compose stop
 ```
+
+Volumes `tdlib_data`, `postgres_data`, `service_settings` и `service_secrets` переживают recreate и
+обычный `docker compose down`. Команда `docker compose down -v` безвозвратно удалит сообщения,
+авторизацию, настройки и внутренние ключи; используйте её только для намеренного полного сброса.
+
+## Amnezia overrides, recovery и backup
+
+Если autodiscovery невозможен, создайте `.env` и явно задайте все значения:
+
+```dotenv
+AMNEZIA_ADMIN_INTERFACE=amn0
+AMNEZIA_ADMIN_BIND_ADDRESS=10.8.0.1
+AMNEZIA_ADMIN_ALLOWED_CIDRS=10.8.0.0/24
+```
+
+Адрес обязан существовать на активном интерфейсе, быть private и входить в разрешённый CIDR.
+Wildcard/public/multicast адреса отклоняются. `X-Forwarded-For` не используется для допуска.
+
+Для backup остановите сервис и сохраните все четыре volume согласованно. Нельзя восстанавливать
+`service_settings` без соответствующего `service_secrets`: настройки зашифрованы, а управляющие
+команды подписаны. Отдельно документируйте резервную копию PostgreSQL. Никогда не помещайте
+выгруженные secrets в Git или общедоступное облако.
+
+Environment-only recovery остаётся отдельным режимом и не смешивается с UI snapshot:
+
+```bash
+cp .env.example .env
+# заполнить recovery-поля
+docker compose stop collector admin
+docker compose --profile recovery run --rm collector-recovery
+```
+
+Одновременно запускать recovery worker и обычный collector нельзя.
+
+## Threat model панели
+
+VPN boundary снижает сетевую доступность, но не заменяет пароль. Панель дополнительно использует
+стойкий hash пароля, server-side sessions, one-time CSRF, rate limit и cookies без доступа из
+client-side scripts. Секреты шифруются на диске и маскируются в HTML/status/errors. Root или
+пользователь с доступом к Docker volumes всё равно находится внутри доверенной границы и может
+получить ключи; защита от полностью скомпрометированного host не заявляется. Панель не получает
+Docker socket и не выполняет произвольные shell-команды.
 
 ## Что именно нормализуется
 
@@ -221,12 +267,9 @@ TEST_DATABASE_URL=postgresql+asyncpg://news:password@localhost:5432/news_test py
 
 Тест создаёт и удаляет только собственную случайно названную schema внутри указанной test DB.
 
-Миграции вручную:
-
-```bash
-docker compose run --rm collector alembic current
-docker compose run --rm collector alembic upgrade head
-```
+В штатном режиме supervisor перед каждым запуском ingestion передаёт Alembic URL активной
+ревизии и выполняет upgrade до head. Preflight показывает состояние схемы без изменения данных;
+ручной URL из encrypted storage в environment не экспортируется.
 
 ## OpenSpec
 

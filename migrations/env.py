@@ -14,7 +14,7 @@ if config.config_file_name is not None:
 
 config.set_main_option(
     "sqlalchemy.url",
-    os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url")),
+    os.environ.get("NEWS_DATABASE_URL", config.get_main_option("sqlalchemy.url")),
 )
 target_metadata = Base.metadata
 

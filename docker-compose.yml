@@ -1,40 +1,117 @@
-services:
-  postgres:
-    image: postgres:16-bookworm
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-news}
-      POSTGRES_USER: ${POSTGRES_USER:-news}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+x-app: &app
+  image: news-collector:local
 
-  collector:
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+
+services:
+  bootstrap:
+    <<: [*app, *hardened]
     build:
       context: .
       args:
         TDLIB_GIT_REF: ${TDLIB_GIT_REF:-022d60202e446ad1287b9fb68e687c8a0760788b}
+    command: ["python", "-m", "app.settings.bootstrap", "/run/news-secrets"]
+    restart: "no"
+    volumes:
+      - service_secrets:/run/news-secrets
+
+  postgres:
+    image: postgres:16-bookworm
     restart: unless-stopped
     depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB: news
+      POSTGRES_USER: news
+      POSTGRES_PASSWORD_FILE: /run/news-secrets/postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U news -d news"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - service_secrets:/run/news-secrets:ro
+
+  admin:
+    <<: [*app, *hardened]
+    command: ["python", "-m", "app.admin.main"]
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-      TELEGRAM_PHONE_NUMBER: ${TELEGRAM_PHONE_NUMBER}
-      TELEGRAM_DATABASE_ENCRYPTION_KEY: ${TELEGRAM_DATABASE_ENCRYPTION_KEY:-}
-      TDLIB_DATA_DIR: /var/lib/tdlib
-      TDLIB_LIBRARY_PATH: /usr/local/lib/libtdjson.so
-      TDLIB_LOG_VERBOSITY: ${TDLIB_LOG_VERBOSITY:-2}
-      TELEGRAM_DOWNLOAD_MEDIA: ${TELEGRAM_DOWNLOAD_MEDIA:-false}
-      TELEGRAM_MEDIA_DOWNLOAD_PRIORITY: ${TELEGRAM_MEDIA_DOWNLOAD_PRIORITY:-16}
+      NEWS_SECRETS_DIR: /run/news-secrets
+      NEWS_SETTINGS_DIR: /var/lib/news-settings
+      NEWS_ADMIN_DATABASE_HOST: 127.0.0.1
+      ADMIN_PORT: ${ADMIN_PORT:-8080}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      AMNEZIA_ADMIN_INTERFACE: ${AMNEZIA_ADMIN_INTERFACE:-}
+      AMNEZIA_ADMIN_BIND_ADDRESS: ${AMNEZIA_ADMIN_BIND_ADDRESS:-}
+      AMNEZIA_ADMIN_ALLOWED_CIDRS: ${AMNEZIA_ADMIN_ALLOWED_CIDRS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,socket; from app.admin.network import resolve_admin_network; n=resolve_admin_network(interface_name=os.getenv('AMNEZIA_ADMIN_INTERFACE') or None,bind_address=os.getenv('AMNEZIA_ADMIN_BIND_ADDRESS') or None,allowed_cidrs=os.getenv('AMNEZIA_ADMIN_ALLOWED_CIDRS') or None); socket.create_connection((n.bind_address,int(os.getenv('ADMIN_PORT','8080'))),2).close()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    volumes:
+      - service_secrets:/run/news-secrets:ro
+      - service_settings:/var/lib/news-settings
+      - tdlib_data:/var/lib/tdlib
+
+  collector:
+    <<: [*app, *hardened]
+    command: ["python", "-m", "app.supervisor"]
+    restart: unless-stopped
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      NEWS_SECRETS_DIR: /run/news-secrets
+      NEWS_SETTINGS_DIR: /var/lib/news-settings
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json; from pathlib import Path; p=Path('/var/lib/news-settings/status.json'); d=json.loads(p.read_text()); assert d.get('state') in {'not_configured','stopped','starting','running','stopping','error'}"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    volumes:
+      - service_secrets:/run/news-secrets:ro
+      - service_settings:/var/lib/news-settings
+      - tdlib_data:/var/lib/tdlib
+
+  collector-recovery:
+    <<: [*app, *hardened]
+    profiles: [recovery]
+    command: ["python", "-m", "app.main"]
+    env_file:
+      - path: .env
+        required: false
     stdin_open: true
     tty: true
     volumes:
@@ -43,3 +120,5 @@ services:
 volumes:
   postgres_data:
   tdlib_data:
+  service_secrets:
+  service_settings:

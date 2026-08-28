@@ -1,8 +1,13 @@
-.git
 .env
-.venv
-__pycache__
+.git
+.github
 .pytest_cache
 .ruff_cache
-tdlib-data
+.venv
+__pycache__
+*.pyc
 postgres-data
+tdlib-data
+service-secrets
+service-settings
+openspec/changes

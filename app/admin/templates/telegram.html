@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Вход в Telegram{% endblock %}
+{% block head %}{% if refresh %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block content %}
+<section class="card auth-card">
+  <div class="auth-steps" aria-label="Этапы входа">
+    <span class="done">1. Настройки</span>
+    <span class="{{ 'done' if telegram.ready else 'active' }}">2. Вход</span>
+    <span class="{{ 'done' if telegram.ready else '' }}">3. Готово</span>
+  </div>
+
+  {% if telegram.ready %}
+    <div class="auth-result success-mark" aria-hidden="true">✓</div>
+    <h2>Telegram подключён</h2>
+    <p>Авторизация завершена. Сессия сохранена и переживёт перезапуск сервиса.</p>
+    <a class="button primary" href="/">Вернуться к настройкам</a>
+  {% elif challenge and challenge.kind == 'code' %}
+    <h2>Введите код из Telegram</h2>
+    <p>Telegram отправил код в официальное приложение на другом устройстве. Это не SMS, если сам Telegram не указал обратное.</p>
+    {% if telegram.error %}<p class="auth-error">{{ telegram.error.message }}</p>{% endif %}
+    <form method="post" action="/telegram/respond" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="correlation_id" value="{{ challenge.correlation_id }}">
+      <label for="telegram-code">Код подтверждения</label>
+      <input class="code-input" id="telegram-code" name="code" required inputmode="numeric" autocomplete="one-time-code" autofocus placeholder="12345">
+      <button class="primary" type="submit">Продолжить</button>
+    </form>
+  {% elif challenge and challenge.kind == 'password' %}
+    <h2>Введите облачный пароль</h2>
+    <p>Для аккаунта включена двухэтапная аутентификация. Нужен облачный пароль Telegram — не код и не пароль от этой панели.</p>
+    {% if telegram.error %}<p class="auth-error">{{ telegram.error.message }}</p>{% endif %}
+    <form method="post" action="/telegram/respond" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="correlation_id" value="{{ challenge.correlation_id }}">
+      <label for="telegram-password">Пароль Telegram</label>
+      <input id="telegram-password" type="password" name="password" required autocomplete="current-password" autofocus>
+      <button class="primary" type="submit">Продолжить</button>
+    </form>
+  {% elif challenge and challenge.kind == 'email' %}
+    <h2>Укажите email</h2>
+    <p>Telegram запросил email для завершения входа.</p>
+    {% if telegram.error %}<p class="auth-error">{{ telegram.error.message }}</p>{% endif %}
+    <form method="post" action="/telegram/respond" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="correlation_id" value="{{ challenge.correlation_id }}">
+      <label for="telegram-email">Email</label>
+      <input id="telegram-email" type="email" name="email" required autocomplete="email" autofocus>
+      <button class="primary" type="submit">Продолжить</button>
+    </form>
+  {% elif challenge and challenge.kind == 'email_code' %}
+    <h2>Введите код из письма</h2>
+    <p>Telegram отправил код на указанный email.</p>
+    {% if telegram.error %}<p class="auth-error">{{ telegram.error.message }}</p>{% endif %}
+    <form method="post" action="/telegram/respond" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="correlation_id" value="{{ challenge.correlation_id }}">
+      <label for="telegram-email-code">Код из письма</label>
+      <input class="code-input" id="telegram-email-code" name="code" required inputmode="numeric" autocomplete="one-time-code" autofocus>
+      <button class="primary" type="submit">Продолжить</button>
+    </form>
+  {% elif challenge and challenge.kind == 'registration' %}
+    <h2>Завершите регистрацию</h2>
+    <p>Этот номер ещё не зарегистрирован в Telegram.</p>
+    {% if challenge.presentation.terms %}<p class="terms">{{ challenge.presentation.terms }}</p>{% endif %}
+    <form method="post" action="/telegram/respond" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="correlation_id" value="{{ challenge.correlation_id }}">
+      <label>Имя<input name="first_name" required autocomplete="given-name"></label>
+      <label>Фамилия<input name="last_name" autocomplete="family-name"></label>
+      <button class="primary" type="submit">Продолжить</button>
+    </form>
+  {% elif challenge and challenge.kind == 'other_device' %}
+    <h2>Подтвердите вход</h2>
+    <p>Telegram просит подтвердить авторизацию на другом устройстве.</p>
+    <a class="button primary" href="{{ challenge.presentation.link }}" rel="noreferrer">Открыть Telegram</a>
+  {% elif telegram.running %}
+    <div class="spinner" aria-hidden="true"></div>
+    <h2>Отправляем код…</h2>
+    <p>Обычно это занимает несколько секунд. Страница обновится автоматически.</p>
+    {% if telegram.error %}<p class="auth-error">{{ telegram.error.message }}</p>{% endif %}
+  {% else %}
+    <h2>Не удалось продолжить вход</h2>
+    <p class="auth-error">{% if telegram.error %}{{ telegram.error.message }}{% else %}Сеанс авторизации остановлен.{% endif %}</p>
+    <form method="post" action="/telegram/start">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="primary" type="submit">Получить новый код</button>
+    </form>
+  {% endif %}
+
+  {% if not telegram.ready %}<a class="back-link" href="/">← Вернуться к настройкам</a>{% endif %}
+</section>
+{% endblock %}

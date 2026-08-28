@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+<nav class="top-nav"><a class="button primary" href="/browser">Открыть собранные данные</a></nav>
+<section class="grid status-grid">
+  <article class="card"><h3>Collector</h3><strong>{{ collector.state }}</strong><p>Applied: {{ collector.applied_revision or '—' }}</p><p>Последний update: {{ collector.last_update_at or '—' }}</p></article>
+  <article class="card"><h3>Ревизии</h3><p>Draft: {{ manifest.draft_revision or '—' }}</p><p>Active: {{ manifest.active_revision or '—' }}</p><p>Applied: {{ manifest.applied_revision or '—' }}</p></article>
+  <article class="card"><h3>Telegram</h3><strong>{{ telegram.state }}</strong><p>{% if telegram.ready %}Подключено{% else %}Требуется авторизация{% endif %}</p></article>
+</section>
+
+{% if checks and checks.results %}
+<section class="card"><h2>Проверки</h2><div class="grid checks">
+{% for name, item in checks.results.items() %}<div class="check {{ 'ok' if item.ok else 'bad' }}"><strong>{{ name }}</strong><span>{{ item.status }}</span><small>{{ item.message }}</small></div>{% endfor %}
+</div></section>
+{% endif %}
+
+<section class="card guide"><h2>Что нужно подготовить</h2>
+  <p>Для первого запуска обязательны только три значения: <strong>Telegram API ID</strong>, <strong>Telegram API hash</strong> и <strong>номер телефона</strong>.</p>
+  <p>API ID и API hash получите на <a href="https://my.telegram.org/apps" target="_blank" rel="noreferrer">my.telegram.org/apps</a>: войдите по номеру телефона, откройте <em>API development tools</em> и создайте приложение. Bot token сюда не подходит.</p>
+  <p>PostgreSQL уже настроен автоматически. Остальные значения можно оставить как предложено. После сохранения пройдите Telegram-авторизацию, затем запустите проверки.</p>
+</section>
+
+<section class="card"><h2>Настройки</h2>
+<form method="post" action="/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for section in ['Telegram', 'PostgreSQL', 'TDLib', 'Media', 'Logging', 'Reliability'] %}
+  <fieldset><legend>{{ section }}</legend><div class="grid form-grid">
+  {% for name, metadata in field_metadata.items() if metadata.section == section %}
+    <label>{{ metadata.label }}{% if name in ['telegram_api_id', 'telegram_api_hash', 'telegram_phone_number'] %}<span class="required">обязательно</span>{% endif %}{% if metadata.secret and configured_secrets[name] %}<span class="saved">✓ Сохранено безопасно</span><small>Значение скрыто. Оставьте поле пустым, чтобы сохранить его без изменений; вводите новое только для замены.</small>{% endif %}
+    {% if name == 'telegram_download_media' %}<input type="checkbox" name="{{ name }}" {% if settings[name] %}checked{% endif %}>
+    {% elif metadata.secret %}<input type="password" name="{{ name }}" value="" placeholder="{{ metadata.placeholder }}" autocomplete="off">
+      {% if name == 'telegram_database_encryption_key' and configured_secrets[name] %}<span class="inline"><input type="checkbox" name="delete_{{ name }}"> удалить сохранённый optional key</span>{% endif %}
+    {% else %}<input name="{{ name }}" value="{{ settings[name] if settings[name] is not none else '' }}" placeholder="{{ metadata.placeholder }}">
+    {% endif %}
+    <small class="help">{{ metadata.help }}</small>
+    {% if errors[name] %}<span class="error">{{ errors[name] }}</span>{% endif %}</label>
+  {% endfor %}
+  </div></fieldset>
+  {% endfor %}
+  <button type="submit">Сохранить черновик</button>
+</form></section>
+
+<section class="card actions"><h2>Управление</h2>
+  <form method="post" action="/checks"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Проверить подключения</button></form>
+  {% if telegram.running or telegram.ready %}<a class="button" href="/telegram">Открыть вход в Telegram</a>{% else %}<form method="post" action="/telegram/start"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Войти в Telegram</button></form>{% endif %}
+  <form method="post" action="/control/start"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="primary">Сохранить и запустить сбор</button></form>
+  <form method="post" action="/control/stop"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Остановить</button></form>
+  <form method="post" action="/control/restart"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Перезапустить</button></form>
+</section>
+
+<section class="card"><h2>Пароль панели</h2><form method="post" action="/password" class="grid form-grid">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Текущий пароль<input type="password" name="current_password" required autocomplete="current-password"></label>
+  <label>Новый пароль<input type="password" name="new_password" required minlength="12" autocomplete="new-password"></label>
+  <label>Повтор нового пароля<input type="password" name="confirmation" required minlength="12" autocomplete="new-password"></label>
+  <button>Заменить пароль</button>
+</form></section>
+
+<section class="card"><h2>История настроек</h2>{% for revision in revisions %}<div class="revision"><span>#{{ revision.revision }} · {{ revision.created_at }} · {{ revision.changed_fields|join(', ') }}</span><form method="post" action="/revisions/{{ revision.revision }}/rollback"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Создать черновик из этой версии</button></form></div>{% else %}<p>Ревизий пока нет.</p>{% endfor %}</section>
+
+<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link">Выйти</button></form>
+{% endblock %}

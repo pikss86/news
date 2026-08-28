@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Raw TDLib events{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><h2>Raw TDLib events</h2><p>Append-oriented журнал оригинальных обновлений.</p></div></section>
+<form class="filter-bar" method="get">
+  <label>Тип события<select name="event_type"><option value="">Все типы</option>{% for item in event_types %}<option value="{{ item.event_type }}" {% if selected_event_type == item.event_type %}selected{% endif %}>{{ item.event_type }} ({{ item.count }})</option>{% endfor %}</select></label>
+  <label>Chat ID<input name="chat_id" value="{{ chat_id or '' }}" inputmode="numeric"></label>
+  <label>Message ID<input name="message_id" value="{{ message_id or '' }}" inputmode="numeric"></label>
+  <button type="submit">Применить</button><a class="button" href="/browser/events">Сбросить</a>
+</form>
+<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Тип</th><th>Получено</th><th>Chat / Message</th></tr></thead><tbody>
+{% for item in rows %}<tr><td><a href="/browser/events/{{ item.id }}">#{{ item.id }}</a></td><td><a href="/browser/events?event_type={{ item.event_type }}">{{ item.event_type }}</a></td><td>{{ item.received_at }}</td><td>{{ item.chat_id or '—' }} / {{ item.message_id or '—' }}</td></tr>
+{% else %}<tr><td colspan="4" class="empty">События не найдены.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% include "browser_pagination.html" %}
+{% endblock %}

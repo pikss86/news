@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Данные недоступны{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="card narrow"><h2>Данные временно недоступны</h2><p class="auth-error">{{ message }}</p><a class="button" href="/browser">Повторить</a></section>
+{% endblock %}

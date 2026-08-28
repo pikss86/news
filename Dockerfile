@@ -33,14 +33,16 @@ COPY pyproject.toml README.md ./
 COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
-COPY tests ./tests
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN pip install --no-cache-dir ".[dev]" \
-    && mkdir -p /var/lib/tdlib \
-    && chown -R collector:collector /app /var/lib/tdlib \
+    && mkdir -p /var/lib/tdlib /var/lib/news-settings /run/news-secrets \
+    && chown -R collector:collector /app /var/lib/tdlib /var/lib/news-settings /run/news-secrets \
     && chmod +x /usr/local/bin/docker-entrypoint.sh \
     && ldconfig
+
+COPY tests ./tests
+COPY CONCEPT.md ./
 
 USER collector
 ENTRYPOINT ["docker-entrypoint.sh"]

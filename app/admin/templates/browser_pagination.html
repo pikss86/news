@@ -1,0 +1,7 @@
+{% if pagination.total %}
+<nav class="pagination" aria-label="Страницы">
+  {% if pagination.prev_url %}<a class="button" href="{{ pagination.prev_url }}">← Назад</a>{% endif %}
+  <span>Страница {{ pagination.page }} · записей {{ pagination.total }}</span>
+  {% if pagination.next_url %}<a class="button" href="{{ pagination.next_url }}">Вперёд →</a>{% endif %}
+</nav>
+{% endif %}

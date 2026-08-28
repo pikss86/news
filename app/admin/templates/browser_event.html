@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Raw event #{{ event.id }}{% endblock %}
+{% block content %}
+{% include "browser_nav.html" %}
+<section class="browser-heading"><div><p class="crumb"><a href="/browser/events">Raw events</a> / #{{ event.id }}</p><h2>{{ event.event_type }}</h2><p>{{ event.received_at }} · chat {{ event.chat_id or '—' }} · message {{ event.message_id or '—' }}</p></div>{% if event.chat_id and event.message_id %}<a class="button" href="/browser/messages/{{ event.chat_id }}/{{ event.message_id }}">Нормализованное сообщение</a>{% endif %}</section>
+<section class="card"><h2>Оригинальный TDLib JSON</h2><p class="muted">Fingerprint: {{ event.event_fingerprint }}</p><pre class="json-view">{{ event.payload|prettyjson }}</pre></section>
+{% endblock %}
