@@ -14,14 +14,11 @@
 - [x] 2.4 Реализовать signed monotonic start/stop/restart requests и atomic supervisor status без произвольных команд; проверить повтор request id и damaged control file
 - [x] 2.5 Реализовать централизованную redaction phone, API hash, database URL/password, authentication code и 2FA; проверить logs, status, HTML и errors secret-scan тестами
 
-## 3. Amnezia VPN и web security
+## 3. Web security
 
-- [x] 3.1 Реализовать консервативный поиск активных private TUN/WireGuard/Amnezia interfaces с fake-interface fixtures; проверить один, ноль и несколько кандидатов
-- [x] 3.2 Реализовать explicit interface/address/CIDR override validation и точный listener bind; проверить отказ wildcard, public, multicast, missing interface и CIDR mismatch
-- [x] 3.3 Реализовать peer-address middleware до routing с игнорированием proxy headers; проверить VPN allow, non-VPN deny и spoofed X-Forwarded-For
-- [x] 3.4 Реализовать создание/замену admin password со стойким hash и проверить отсутствие plaintext password в persistent files и responses
-- [x] 3.5 Реализовать server-side sessions с idle/absolute expiry и HttpOnly SameSite=Strict cookie; проверить login/logout/expiry/restart invalidation и Secure flag при TLS mode
-- [x] 3.6 Добавить one-time CSRF tokens и login rate limiting по socket peer address; проверить missing/wrong/reused token и временную блокировку неверных входов
+- [x] 3.1 Реализовать создание/замену admin password со стойким hash и проверить отсутствие plaintext password в persistent files и responses
+- [x] 3.2 Реализовать server-side sessions с idle/absolute expiry и HttpOnly SameSite=Strict cookie; проверить login/logout/expiry/restart invalidation и Secure flag при TLS mode
+- [x] 3.3 Добавить one-time CSRF tokens и login rate limiting; проверить missing/wrong/reused token и временную блокировку неверных входов
 
 ## 4. First-run UI и диагностика
 
@@ -53,11 +50,11 @@
 
 ## 7. Docker, документация и итоговая проверка
 
-- [x] 7.1 Обновить Compose стандартным bootstrap/admin/supervisor flow, named secret/settings volumes, host network admin, non-root user, dropped capabilities, read-only root filesystem и отсутствующим Docker socket; проверить `docker compose config`
+- [x] 7.1 Обновить Compose стандартным bootstrap/admin/supervisor flow, named secret/settings volumes, non-root user, dropped capabilities, read-only root filesystem и отсутствующим Docker socket; проверить `docker compose config`
 - [x] 7.2 Добавить healthchecks и startup ordering так, чтобы clean `docker compose up -d` поднимал панель и БД, но не ingestion; проверить состояние контейнеров без `.env`
 - [x] 7.3 Обновить `.env.example` только optional override/recovery placeholders и проверить, что `.env`, bootstrap secrets и settings data игнорируются Git и не входят в image
-- [x] 7.4 Обновить README сценарием «одна команда → Amnezia URL → пароль → настройки → checks → Telegram code/2FA → start», recovery, backup и threat model
+- [x] 7.4 Обновить README сценарием «одна команда → пароль → настройки → checks → Telegram code/2FA → start», recovery, backup и threat model
 - [x] 7.5 Обновить CONCEPT.md описанием setup/control plane, диагностик и явного запуска без привязки к конкретным технологиям
 - [x] 7.6 Добавить end-to-end test clean bootstrap → setup → draft → checks → web authorization → start → last update → stop → restart → rollback без реальных credentials
 - [x] 7.7 Запустить `openspec validate --all --strict`, format, lint, полный pytest, PostgreSQL integration, Alembic check, Compose build/config и исправить найденные ошибки
-- [ ] 7.8 На Linux-host с реальной Amnezia проверить bind только на VPN IP и deny вне CIDR; с реальными Telegram credentials проверить code/2FA, ready, получение update и явно отделить эти результаты от автоматических тестов
+- [ ] 7.8 С реальными Telegram credentials проверить code/2FA, ready и получение update; явно отделить эти результаты от автоматических тестов
