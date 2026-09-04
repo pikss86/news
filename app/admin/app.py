@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
@@ -42,6 +42,23 @@ NOTICES = {
     "restart-requested": "Команда перезапуска отправлена collector-у.",
     "rollback-created": "Из выбранной ревизии создан новый черновик; он не запущен.",
 }
+
+
+def _safe_return_path(value: str | None) -> str:
+    if not value or len(value) > 2048 or any(ord(character) < 32 for character in value):
+        return "/"
+    decoded = unquote(value)
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or parsed.fragment
+        or not parsed.path.startswith("/")
+        or decoded.startswith("//")
+        or "\\" in decoded
+    ):
+        return "/"
+    return value
 
 
 def _default_values(secrets_directory: Path) -> dict[str, Any]:
@@ -318,8 +335,14 @@ def create_admin_app(
     def require_session(request: Request) -> str:
         token = session_token(request)
         if not sessions.validate(token):
+            location = "/login"
+            if request.method in {"GET", "HEAD"}:
+                return_path = request.url.path
+                if request.url.query:
+                    return_path = f"{return_path}?{request.url.query}"
+                location = f"/login?{urlencode({'next': return_path})}"
             raise HTTPException(
-                status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"}
+                status_code=status.HTTP_303_SEE_OTHER, headers={"Location": location}
             )
         assert token is not None
         return token
@@ -996,12 +1019,16 @@ def create_admin_app(
         return response
 
     @app.get("/login", response_class=HTMLResponse)
-    async def login_page(request: Request) -> Any:
+    async def login_page(request: Request, next: str = "") -> Any:
         current_peer = peer(request)
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"csrf_token": sessions.issue_csrf(current_peer, anonymous=True), "error": None},
+            {
+                "csrf_token": sessions.issue_csrf(current_peer, anonymous=True),
+                "error": None,
+                "next": _safe_return_path(next),
+            },
         )
 
     @app.post("/login", response_class=HTMLResponse)
@@ -1016,7 +1043,9 @@ def create_admin_app(
         else:
             limiter.success(current_peer)
             token = sessions.create()
-            response = RedirectResponse("/", status_code=303)
+            response = RedirectResponse(
+                _safe_return_path(str(form.get("next", ""))), status_code=303
+            )
             response.set_cookie(
                 COOKIE_NAME,
                 token,
@@ -1029,7 +1058,11 @@ def create_admin_app(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"csrf_token": sessions.issue_csrf(current_peer, anonymous=True), "error": error},
+            {
+                "csrf_token": sessions.issue_csrf(current_peer, anonymous=True),
+                "error": error,
+                "next": _safe_return_path(str(form.get("next", ""))),
+            },
             status_code=429 if not limiter.allowed(current_peer) else 401,
         )
 

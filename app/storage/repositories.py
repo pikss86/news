@@ -184,6 +184,15 @@ class UpdateRepository:
             )
             return
         if event_type == "updateDeleteMessages":
+            if update.get("from_cache", False):
+                logger.info(
+                    "cache-only message removal ignored",
+                    extra={
+                        "chat_id": update.get("chat_id"),
+                        "message_count": len(update.get("message_ids", [])),
+                    },
+                )
+                return
             chat_id = update["chat_id"]
             await self._ensure_chat(session, chat_id, observed_at)
             for deleted_message_id in update.get("message_ids", []):

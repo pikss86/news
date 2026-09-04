@@ -4,16 +4,21 @@ context: |
   Write all project artifacts in Russian.
   The project is a long-running Telegram collector responsible only for COLLECT, PRESERVE, NORMALIZE.
   A source publication is an information artifact, not an established real-world fact.
-  Facts and interpretations must remain separate, provenance must never be lost, and observed history must never be overwritten.
+  Facts and interpretations must remain separate, provenance must never be lost,
+  and observed history must never be overwritten.
   Preserve raw input before deriving normalized state. Do not invent values absent from the source.
-  Do not add analytical processing, LLM, Kafka, Neo4j, Redis, Celery, probabilistic inference, or unrelated microservices.
+  Do not add analytical processing, LLM, Kafka, Neo4j, Redis, Celery, probabilistic inference,
+  or unrelated microservices.
   Keep the design small and understandable. Every database schema change requires a migration.
-  Secrets must come from the runtime environment and must never be committed.
+  Secrets must come from protected runtime or bootstrap storage and must never be committed.
+  Use README.md for current operation, CONCEPT.md for stable intent and invariants,
+  ROADMAP.md for sequencing, and openspec/specs for accepted behavior.
 
 rules:
   proposal:
     - Explicitly identify scope and non-goals
     - Explain how provenance, history, and idempotency are affected
+    - Identify the ROADMAP.md milestone served by the change, or explicitly state that it is out of roadmap
   specs:
     - Describe externally observable behavior rather than implementation details
     - Include restart, duplicate-delivery, and failure scenarios when they are relevant

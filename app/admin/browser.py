@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from sqlalchemy import text
@@ -8,6 +9,23 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.collector.media import extract_file_objects
+
+TDLIB_SERVER_MESSAGE_ID_SHIFT = 20
+TELEGRAM_USERNAME = re.compile(r"[A-Za-z0-9_]{5,32}")
+
+
+def telegram_message_url(
+    message_id: int, supergroup_id: int | None, username: str | None
+) -> str | None:
+    if message_id <= 0 or supergroup_id is None or supergroup_id <= 0:
+        return None
+    divisor = 1 << TDLIB_SERVER_MESSAGE_ID_SHIFT
+    server_message_id, local_bits = divmod(message_id, divisor)
+    if local_bits or server_message_id <= 0:
+        return None
+    if username and TELEGRAM_USERNAME.fullmatch(username):
+        return f"https://t.me/{username}/{server_message_id}"
+    return f"https://t.me/c/{supergroup_id}/{server_message_id}"
 
 
 class DataBrowser:
@@ -217,6 +235,29 @@ class DataBrowser:
         )
         if message is None:
             return None
+        telegram_identity = await self._row(
+            database_url,
+            """
+            SELECT (c.raw_chat->'type'->>'supergroup_id')::bigint AS supergroup_id,
+                   (
+                     SELECT e.payload->'supergroup'->'usernames'->'active_usernames'->>0
+                       FROM td_events e
+                      WHERE e.event_type = 'updateSupergroup'
+                        AND e.payload->'supergroup'->>'id' =
+                            c.raw_chat->'type'->>'supergroup_id'
+                      ORDER BY e.id DESC
+                      LIMIT 1
+                   ) AS username
+              FROM telegram_chats c
+             WHERE c.chat_id = :chat_id
+            """,
+            {"chat_id": chat_id},
+        )
+        message["telegram_url"] = telegram_message_url(
+            message_id,
+            (telegram_identity or {}).get("supergroup_id"),
+            (telegram_identity or {}).get("username"),
+        )
         versions = await self._rows(
             database_url,
             """

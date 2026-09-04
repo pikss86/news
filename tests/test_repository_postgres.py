@@ -47,6 +47,19 @@ async def test_repository_versioning_and_idempotency() -> None:
             assert not await repository.process(session, new_message_update())
             assert await repository.process(session, content_update())
             assert not await repository.process(session, content_update())
+            assert await repository.process(
+                session, delete_update(from_cache=True, is_permanent=False)
+            )
+            await session.flush()
+            cached_message = await session.get(TelegramMessage, (-100123, 200))
+            cached_version_count = await session.scalar(
+                select(func.count())
+                .select_from(TelegramMessageVersion)
+                .where(TelegramMessageVersion.message_id == 200)
+            )
+            assert cached_message is not None
+            assert not cached_message.is_deleted
+            assert cached_version_count == 2
             assert await repository.process(session, delete_update())
             assert not await repository.process(session, delete_update())
             assert await repository.process(
@@ -104,7 +117,7 @@ async def test_repository_versioning_and_idempotency() -> None:
         assert message.is_deleted
         assert message.text == "Text B"
         assert version_count == 3
-        assert raw_event_count == 8
+        assert raw_event_count == 9
         assert [version.change_type for version in versions] == ["created", "edited", "deleted"]
         assert versions[0].snapshot["text"] == "Text A"
         assert versions[1].snapshot["text"] == "Text B"

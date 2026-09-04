@@ -6,6 +6,7 @@ from pathlib import Path
 from httpx import ASGITransport, AsyncClient
 
 from app.admin.app import create_admin_app
+from app.admin.browser import telegram_message_url
 from app.admin.network import AdminNetwork
 from app.admin.security import AdminPasswordStore
 from app.settings.bootstrap import ensure_bootstrap
@@ -18,6 +19,21 @@ def csrf(html: str) -> str:
     match = re.search(r'name="csrf_token" value="([^"]+)"', html)
     assert match
     return match.group(1)
+
+
+def test_telegram_message_url_for_public_and_private_supergroups() -> None:
+    message_id = 54_388 << 20
+
+    assert (
+        telegram_message_url(message_id, 1_254_661_214, "ostorozhno_novosti")
+        == "https://t.me/ostorozhno_novosti/54388"
+    )
+    assert (
+        telegram_message_url(message_id, 1_254_661_214, None)
+        == "https://t.me/c/1254661214/54388"
+    )
+    assert telegram_message_url(message_id + 1, 1_254_661_214, "channel") is None
+    assert telegram_message_url(message_id, None, "channel") is None
 
 
 class Browser:
@@ -138,6 +154,7 @@ class Browser:
                 "reply_to": None,
                 "media": {},
                 "interaction_info": {},
+                "telegram_url": "https://t.me/news_chat/20",
             },
             "versions": [],
             "attachments": [attachment],
@@ -173,26 +190,32 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
     ) as client:
         denied = await client.get("/browser")
         assert denied.status_code == 303
-        assert denied.headers["location"] == "/login"
+        assert denied.headers["location"] == "/login?next=%2Fbrowser"
         denied_file = await client.get("/browser/files/501/content")
         assert denied_file.status_code == 303
-        assert denied_file.headers["location"] == "/login"
+        assert denied_file.headers["location"] == "/login?next=%2Fbrowser%2Ffiles%2F501%2Fcontent"
         denied_cache = await client.get("/browser/cache")
         assert denied_cache.status_code == 303
-        assert denied_cache.headers["location"] == "/login"
+        assert denied_cache.headers["location"] == "/login?next=%2Fbrowser%2Fcache"
         denied_handlers = await client.get("/browser/cache/handlers")
         assert denied_handlers.status_code == 303
-        assert denied_handlers.headers["location"] == "/login"
+        assert denied_handlers.headers["location"] == "/login?next=%2Fbrowser%2Fcache%2Fhandlers"
 
-        login_page = await client.get("/login")
+        direct_message = await client.get("/browser/messages/10/20")
+        login_location = direct_message.headers["location"]
+        assert login_location == "/login?next=%2Fbrowser%2Fmessages%2F10%2F20"
+        login_page = await client.get(login_location)
+        assert 'name="next" value="/browser/messages/10/20"' in login_page.text
         response = await client.post(
             "/login",
             data={
                 "csrf_token": csrf(login_page.text),
                 "password": "a sufficiently long password",
+                "next": "/browser/messages/10/20",
             },
         )
         assert response.status_code == 303
+        assert response.headers["location"] == "/browser/messages/10/20"
 
         overview = await client.get("/browser")
         assert overview.status_code == 200
@@ -209,6 +232,8 @@ async def test_data_browser_requires_login_escapes_json_and_queues_download(
         assert message.status_code == 200
         assert "Прикреплённые файлы" in message.text
         assert "Скачать в кэш" in message.text
+        assert 'href="https://t.me/news_chat/20"' in message.text
+        assert "Открыть в Telegram" in message.text
 
         event = await client.get("/browser/events/1")
         assert event.status_code == 200

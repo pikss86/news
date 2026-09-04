@@ -29,13 +29,13 @@ def content_update(text: str = "Text B") -> dict:
     }
 
 
-def delete_update() -> dict:
+def delete_update(*, from_cache: bool = False, is_permanent: bool = True) -> dict:
     return {
         "@type": "updateDeleteMessages",
         "chat_id": -100123,
         "message_ids": [200],
-        "is_permanent": True,
-        "from_cache": False,
+        "is_permanent": is_permanent,
+        "from_cache": from_cache,
     }
 
 

@@ -217,6 +217,34 @@ def test_templates_are_responsive_and_use_only_local_assets() -> None:
     assert "metadata.help" in dashboard
 
 
+async def test_login_rejects_external_return_url(tmp_path) -> None:
+    bootstrap = ensure_bootstrap(tmp_path / "secrets")
+    password_store = AdminPasswordStore(tmp_path / "settings" / "admin.json")
+    password_store.set_password("a sufficiently long password")
+    app = create_admin_app(
+        store=SettingsStore(tmp_path / "settings", bootstrap.settings_key_file),
+        control=ControlChannel(tmp_path / "settings", bootstrap.control_key_file),
+        password_store=password_store,
+        network=AdminNetwork("awg0", "10.8.0.1", (ipaddress.ip_network("10.8.0.0/24"),)),
+        secrets_directory=tmp_path / "secrets",
+    )
+    transport = ASGITransport(app=app, client=("10.8.0.2", 1234))
+    async with AsyncClient(
+        transport=transport, base_url="http://service", follow_redirects=False
+    ) as client:
+        login_page = await client.get("/login?next=https%3A%2F%2Fexample.com")
+        response = await client.post(
+            "/login",
+            data={
+                "csrf_token": csrf(login_page.text),
+                "password": "a sufficiently long password",
+                "next": "https://example.com",
+            },
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/"
+
+
 async def test_telegram_code_has_a_simple_dedicated_form(tmp_path) -> None:
     bootstrap = ensure_bootstrap(tmp_path / "secrets")
     password_store = AdminPasswordStore(tmp_path / "settings" / "admin.json")
